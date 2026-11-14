@@ -121,6 +121,9 @@ def normalize_p2t(s: str) -> str:
         s = re.sub(r"\\overset(?=\s*\{)", r"\\OVERSET", s)
         s = _rewrite(s, "OVERSET", over, 2)
         s = s.replace("\\overset", "\\overset")
+    # 왼쪽 중괄호 + array/matrix → cases (구간별 함수)
+    s = re.sub(r"\\left\s*\\\{\s*\\begin\{(?:array|matrix|aligned)\}(?:\s*\{[^{}]*\})?(.*?)\\end\{(?:array|matrix|aligned)\}\s*\\right\s*\.",
+               lambda m: "\\begin{cases}" + re.sub(r"\\\\\s*$", "", m.group(1).strip()) + "\\end{cases}", s, flags=re.S)
     # 식 전체를 감싼 { … } 제거
     t = s.strip()
     while t.startswith("{"):

@@ -109,6 +109,18 @@ class PassageReader:
                     break
         return b
 
+    def _marks(self, img, lh):
+        import marks
+        g = np.asarray(img.convert("L"))
+        rec = lambda b: self._rec_one(img, b)  # noqa: E731
+        try:
+            items = [{"box": b, "kind": "text", "val": ch} for b, ch in marks.find_circles(g, lh)]
+            items += [{"box": b, "kind": "math", "val": "\\boxed{\\text{(%s)}}" % ch}
+                      for b, ch in marks.find_boxes(g, lh, rec)]
+        except Exception:  # noqa: BLE001  찾지 못해도 나머지는 진행
+            return []
+        return items
+
     # ------------------------------------------------------------ 전체
     def __call__(self, img: Image.Image):
         img = img.convert("RGB")
@@ -116,13 +128,21 @@ class PassageReader:
         if s > 1:
             img = img.resize((round(img.width * s), round(img.height * s)), Image.LANCZOS)
         t0 = time.time()
-        fboxes = self._formulas(img)
         ws = self._words(img)
         hs = sorted(w["box"][3] - w["box"][1] for w in ws if HANGUL_RUN.search(w["val"]))
         lh = hs[len(hs) // 2] if hs else 30
         cws = sorted((w["box"][2] - w["box"][0]) / len(w["val"]) for w in ws
                      if HANGUL_RUN.fullmatch(w["val"]) and len(w["val"]) >= 2)
         cw = cws[len(cws) // 2] if cws else 0.75 * lh
+
+        # 원문자(㉠, ㉮)와 네모 칸 (가): 찾아서 기록하고 가림
+        mark_items = self._marks(img, lh)
+        if mark_items:
+            img = img.copy(); d = ImageDraw.Draw(img)
+            for it in mark_items:
+                d.rectangle(it["box"], fill="white")
+            ws = [w for w in ws if not any(_inter(w["box"], it["box"]) > 0.5 * _area(w["box"]) for it in mark_items)]
+        fboxes = self._formulas(img)
 
         boxes = []
         for b in fboxes:
@@ -143,7 +163,7 @@ class PassageReader:
         masked = img.copy(); d = ImageDraw.Draw(masked)
         for b in boxes:
             d.rectangle(b, fill="white")
-        items = [{"box": w["box"], "kind": "text", "val": w["val"]} for w in self._words(masked)]
+        items = [{"box": w["box"], "kind": "text", "val": w["val"]} for w in self._words(masked)] + mark_items
         t2 = time.time()
         crops = [img.crop(tuple(int(v) for v in b)) for b in boxes]
         for b, latex in zip(boxes, self.mfr(crops) if crops else []):
@@ -200,6 +220,8 @@ def _tidy(segs):
     for k, v in segs:
         if out and k == "text" and out[-1][0] == "text":
             out[-1] = ("text", out[-1][1] + v)
+        elif out and k == "math" and out[-1][0] == "math":  # 붙어 있는 수식은 한 개로
+            out[-1] = ("math", out[-1][1] + " " + v)
         else:
             out.append((k, v))
     if out and out[0][0] == "text":
