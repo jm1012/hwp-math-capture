@@ -71,6 +71,9 @@ def build_passage_json(paras) -> str:
         p = copy.deepcopy(head)
         p["ru"] = [{"cp": cp, "ch": ch}]
         p["np"] = pids[i + 1] if i + 1 < len(pids) else ""
+        if i > 0:
+            # 첫 문단의 bf=3 은 구역/단 나누기 표시. 그대로 복사하면 문단마다 새 쪽이 시작됨
+            p["bf"] = 0
         ro[pids[i]] = p
     return json.dumps(d, ensure_ascii=False)
 

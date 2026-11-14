@@ -38,6 +38,14 @@ def fix_choices(segs):
         out.append((kind, "".join(new)))
     return out
 
+# 숫자 0 과 알파벳 O 구분: 0(영) 뒤에는 은/을/과/이, O(오) 뒤에는 는/를/와/가 가 붙는다
+_ZERO_AS_O = re.compile(r"(?<![0-9A-Za-z.])0(?=\s?[는를와가](?![가-힣]*\d))")
+
+
+def zero_to_o(segs):
+    return [(k, _ZERO_AS_O.sub("O", v) if k == "text" else v) for k, v in segs]
+
+
 SINGLE = re.compile(r"(?<![A-Za-z가-힣])([A-Za-z])(?=[가-힣]|[\s,.)]|$)")
 
 def single_letters(segs):
