@@ -29,3 +29,4 @@ research/**/imgs/
 .vscode/
 Thumbs.db
 .DS_Store
+research/step3-passage/gt.json

@@ -5,6 +5,8 @@ The clipboard gets only "HTML Format" (plus CF_UNICODETEXT if asked). It holds
 Hangul's data-hwpjson payload, the format Hangul itself writes when copying.
 Never set "Hwp_Native_Info": its presence makes Hangul's Paste fail.
 """
+import copy
+import itertools
 import json
 import time
 
@@ -26,13 +28,59 @@ def build_json(script: str) -> str:
 
 def build_html(script: str) -> bytes:
     """Return CF_HTML bytes for one equation with the given Hangul equation script."""
-    jb = build_json(script).encode("utf-8")
+    # Hangul's convention: fragment offsets point at the START of the marker comments.
+    return _wrap_html(build_json(script).encode("utf-8"))
+
+
+_ids = itertools.count(0x100)
+
+
+def _new_id() -> str:
+    return f"01DD72D6D5485C80{next(_ids):08X}"
+
+
+def build_passage_json(paras) -> str:
+    """paras: [[("text", "함수 "), ("eq", "f(x)=x^2"), ...], ...] (eq 는 한글 수식 스크립트).
+    한글이 글자+수식을 복사할 때와 같은 구조: 문단(ro)의 ch 목록에 {"t": 글자} 와 수식 컨트롤 참조가 차례로 들어감."""
+    d = json.loads(JSON_TEMPLATE.replace(_PLACEHOLDER, '"sc": ""'))
+    ro = d["ro"]
+    head_id = ro["hp"]
+    head = ro[head_id]
+    secd, cold, eq_ref = head["ru"][0]["ch"][:3]
+    eq_tpl = d["cs"].pop(eq_ref["co"])
+    cp = head["ru"][0]["cp"]
+    paras = [p for p in paras if p] or [[("text", "")]]
+    pids = [head_id] + [_new_id() for _ in paras[1:]]
+    for i, segs in enumerate(paras):
+        ch = [secd, cold] if i == 0 else []
+        for kind, val in segs:
+            if kind == "text":
+                if ch and "t" in ch[-1]:
+                    ch[-1] = {"t": ch[-1]["t"] + val}
+                else:
+                    ch.append({"t": val})
+            else:
+                cid = _new_id()
+                c = copy.deepcopy(eq_tpl)
+                c["eq"]["sc"] = val
+                c["id"] = eq_tpl["id"] + len(d["cs"])
+                d["cs"][cid] = c
+                ch.append({"cc": 11, "ci": eq_ref["ci"], "co": cid})
+        if "t" not in ch[-1]:
+            ch.append({"t": ""})
+        p = copy.deepcopy(head)
+        p["ru"] = [{"cp": cp, "ch": ch}]
+        p["np"] = pids[i + 1] if i + 1 < len(pids) else ""
+        ro[pids[i]] = p
+    return json.dumps(d, ensure_ascii=False)
+
+
+def _wrap_html(jb: bytes) -> bytes:
     html = (b"<html><body><!--StartFragment-->"
             b"<div id='hwpEditorBoardContent' class='hwp_editor_board_content' data-hjsonver='1.0' "
             b"data-jsonlen='" + str(len(jb)).encode("ascii") + b"'><!--[data-hwpjson]" + jb +
             b"--></div><!--EndFragment--></body></html>")
     hlen = len(_HEADER.format(0, 0, 0, 0).encode("ascii"))
-    # Hangul's convention: fragment offsets point at the START of the marker comments.
     sf = html.index(b"<!--StartFragment-->")
     ef = html.index(b"<!--EndFragment-->")
     return _HEADER.format(hlen, hlen + len(html), hlen + sf, hlen + ef).encode("ascii") + html
@@ -51,7 +99,15 @@ def _open_clipboard(retries: int = 50, delay: float = 0.02):
 
 def set_equation_clipboard(script: str, plain_text: "str | None" = None) -> None:
     """Replace the clipboard with an equation for Hangul (and optional plain text for other apps)."""
-    data = build_html(script)
+    _set_html(build_html(script), plain_text)
+
+
+def set_passage_clipboard(paras, plain_text: "str | None" = None) -> None:
+    """글자 + 수식이 섞인 여러 문단을 클립보드에 넣는다 (한글에서 Ctrl+V)."""
+    _set_html(_wrap_html(build_passage_json(paras).encode("utf-8")), plain_text)
+
+
+def _set_html(data: bytes, plain_text: "str | None") -> None:
     fmt = cb.RegisterClipboardFormat("HTML Format")
     _open_clipboard()
     try:

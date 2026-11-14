@@ -156,13 +156,13 @@ class HotkeyManager:
 class HotkeyDialog:
     """'원하는 키 조합을 누르세요' 창. 저장하면 on_save(새 단축키 문자열) → (성공 여부, 메시지)."""
 
-    def __init__(self, root: tk.Tk, current: str, default: str, on_save, on_close=None):
+    def __init__(self, root: tk.Tk, current: str, default: str, on_save, on_close=None, title="단축키 변경"):
         self.on_save = on_save
         self.on_close = on_close
         self.default = default
         self.value: str | None = None
         self.win = w = tk.Toplevel(root)
-        w.title("단축키 변경")
+        w.title(title)
         w.attributes("-topmost", True)
         w.resizable(False, False)
         w.configure(bg="white", padx=20, pady=16)

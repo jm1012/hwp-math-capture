@@ -2,24 +2,26 @@
 
 이 프로그램은 아래 오픈소스 구성 요소를 사용합니다. 배포용 실행 파일(Releases의 zip)에는 이 구성 요소들이 함께 들어 있습니다.
 
-## 수식 인식 모델
+## 인식 모델 (실행 파일의 `model` 폴더)
 
 | 구성 요소 | 라이선스 | 출처 |
 |---|---|---|
-| texify (코드) | GPL-3.0 | https://github.com/VikParuchuri/texify |
-| texify 모델 가중치 (`vikp/texify`) | **CC BY-NC-SA 4.0** | https://huggingface.co/vikp/texify |
+| Pix2Text MFR 1.5 (수식 인식, `mfr/`) | MIT | https://huggingface.co/breezedeus/pix2text-mfr-1.5 |
+| Pix2Text MFD 1.5 (수식 위치 검출, `mfd/`) | MIT (모델 카드), 파일 메타데이터에 AGPL-3.0 (Ultralytics YOLO로 학습) | https://huggingface.co/breezedeus/pix2text-mfd-1.5 |
+| PaddleOCR PP-OCRv5 글자 검출 (`ocr/det.onnx`) | Apache-2.0 | https://huggingface.co/PaddlePaddle/PP-OCRv5_mobile_det_onnx |
+| PaddleOCR PP-OCRv5 한국어 인식 (`ocr/rec_korean.onnx`) | Apache-2.0 | https://huggingface.co/PaddlePaddle/korean_PP-OCRv5_mobile_rec_onnx |
 
-> **모델 가중치 이용 조건:** texify 모델은 Vik Paruchuri가 만들었고 CC BY-NC-SA 4.0으로 배포됩니다.
-> 따라서 실행 파일(모델 포함)은 **비상업적 용도로만** 쓸 수 있고, 다시 배포할 때도 같은 조건과 출처 표기를 지켜야 합니다.
-> 라이선스 전문: https://creativecommons.org/licenses/by-nc-sa/4.0/
+> v1.x 실행 파일에 들어 있던 texify 모델(CC BY-NC-SA 4.0, 비상업 조건)은 v2부터 쓰지 않습니다.
 
 ## 라이브러리
 
 | 구성 요소 | 라이선스 | 출처 |
 |---|---|---|
-| PyTorch | BSD-3-Clause | https://github.com/pytorch/pytorch |
-| Hugging Face Transformers | Apache-2.0 | https://github.com/huggingface/transformers |
-| huggingface_hub, tokenizers, safetensors | Apache-2.0 | https://github.com/huggingface |
+| ONNX Runtime | MIT | https://github.com/microsoft/onnxruntime |
+| RapidOCR | Apache-2.0 | https://github.com/RapidAI/RapidOCR |
+| OpenCV (opencv-python-headless) | Apache-2.0 | https://github.com/opencv/opencv-python |
+| Hugging Face tokenizers | Apache-2.0 | https://github.com/huggingface/tokenizers |
+| Shapely, pyclipper, OmegaConf, PyYAML | BSD-3-Clause / MIT | https://pypi.org |
 | Pillow | MIT-CMU (HPND) | https://github.com/python-pillow/Pillow |
 | pywin32 | PSF-2.0 | https://github.com/mhammond/pywin32 |
 | pystray | LGPL-3.0 | https://github.com/moses-palmer/pystray |
