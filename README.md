@@ -4,7 +4,7 @@
 
 - **수식 캡처** (기본 `Ctrl+Shift+Q`): 수식 하나 → 한글 수식 개체
 - **지문 캡처** (기본 `Ctrl+Alt+J`, v2): 글자와 수식이 섞인 문제 → 글자는 글자로, 수식은 수식 개체로 문장 속에 붙음
-- 인터넷 없이 내 PC(CPU)에서 동작하는 무료 모델 사용: [Pix2Text](https://github.com/breezedeus/Pix2Text) 수식 검출·인식, [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) 한국어 OCR
+- 인터넷 없이 내 PC(CPU)에서 동작하는 무료 모델 사용: [Pix2Text](https://github.com/breezedeus/Pix2Text) 수식 검출·인식, [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) 한국어 OCR, [quickspacer](https://github.com/cosmoquester/quickspacer) 띄어쓰기 교정
 - 한글 외 프로그램(메모장 등)에 붙이면 수식이 LaTeX 글자(`$…$`)로 붙음
 
 ## 로드맵
@@ -57,6 +57,7 @@ app/        프로그램 코드
   mfr.py            수식 이미지 → LaTeX (Pix2Text MFR, onnxruntime)
   mfd.py            그림 속 수식 위치 찾기 (Pix2Text MFD)
   passage.py        글자+수식 지문 인식, 줄/문단 정리
+  spacing.py        한국어 띄어쓰기 교정 (quickspacer 모델, numpy)
   latex_fix.py      인식 결과 정리 (표기 통일, 보기 번호 ①~⑤ 등)
   latex2hwp.py      LaTeX → 한글 수식 스크립트 변환
   hwp_clipboard.py  한글 클립보드 형식 만들기 (수식 하나 / 글자+수식 문단)
@@ -68,6 +69,7 @@ research/   개발 중 실험 기록
   step1-model-compare/  무료 수식 인식 모델 3종 비교
   step2-latex2hwp/      LaTeX → 한글 변환 검증
   step3-passage/        글자+수식 지문 인식 실험 (v2)
+  step4-spacing/        띄어쓰기 교정기 비교
 ```
 
 ## 라이선스

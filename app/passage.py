@@ -38,6 +38,11 @@ class PassageReader:
             "Global.use_cls": False, "Global.log_level": "error",
             "Det.model_path": ocr_det, "Rec.model_path": ocr_rec, "Rec.rec_keys_path": ocr_dict})
         self._TextRecInput = TextRecInput
+        try:
+            from spacing import Spacer
+            self.spacer = Spacer()
+        except Exception:  # noqa: BLE001  띄어쓰기 모델이 없으면 OCR 띄어쓰기 그대로
+            self.spacer = None
         self.timing = (0.0, 0.0, 0.0)
 
     # ------------------------------------------------------------ 부품
@@ -83,43 +88,6 @@ class PassageReader:
             else:
                 L = len(v); out.append((x0 + (x1 - x0) * m.start() / L, x0 + (x1 - x0) * m.end() / L, y0, y1))
         return out
-
-    def _split_spaces(self, img, w, lh):
-        """OCR 이 띄어쓰기를 빠뜨린 단어(위의점)를 찾아 나눈다.
-        글자 사이 빈 세로줄이 글자 높이의 0.3배 이상이면 띄어쓰기로 보고, 조각마다 다시 읽어
-        이어 붙인 글자가 원래와 같을 때만 나눈다."""
-        item = {"box": w["box"], "kind": "text", "val": w["val"]}
-        v = w["val"]
-        if " " in v or len(v) < 2 or not HANGUL_RUN.search(v):
-            return [item]
-        x0, y0, x1, y1 = (int(round(c)) for c in w["box"])
-        g = np.asarray(img.crop((x0, y0, x1, y1)).convert("L"), dtype=np.uint8)
-        if g.size == 0:
-            return [item]
-        ink = (g < 140).sum(0) > 0
-        cols = np.nonzero(ink)[0]
-        if len(cols) < 2:
-            return [item]
-        min_gap = max(3, 0.3 * min(lh, y1 - y0))
-        cuts, run = [], 0
-        for x in range(cols[0], cols[-1] + 1):
-            if not ink[x]:
-                run += 1
-            else:
-                if run >= min_gap:
-                    cuts.append((x - run, x))
-                run = 0
-        if not cuts:
-            return [item]
-        edges = [cols[0]] + [c for a, b in cuts for c in (a, b)] + [cols[-1] + 1]
-        parts = []
-        for a, b in zip(edges[::2], edges[1::2]):
-            box = [x0 + a - 2, y0, x0 + b + 2, y1]
-            t, _sc = self._rec_one(img, box)
-            parts.append({"box": box, "kind": "text", "val": t})
-        if "".join(p["val"] for p in parts).replace(" ", "") != v.replace(" ", ""):
-            return [item]
-        return parts
 
     def _trim_edges(self, img, b, cw):
         """수식 박스 끝에 한글 글자(의, 이, 인 …)가 붙어 있으면 잘라낸다."""
@@ -175,9 +143,7 @@ class PassageReader:
         masked = img.copy(); d = ImageDraw.Draw(masked)
         for b in boxes:
             d.rectangle(b, fill="white")
-        items = []
-        for w in self._words(masked):
-            items += self._split_spaces(masked, w, lh)
+        items = [{"box": w["box"], "kind": "text", "val": w["val"]} for w in self._words(masked)]
         t2 = time.time()
         crops = [img.crop(tuple(int(v) for v in b)) for b in boxes]
         for b, latex in zip(boxes, self.mfr(crops) if crops else []):
@@ -188,7 +154,11 @@ class PassageReader:
         self.timing = (t1 - t0, t2 - t1, time.time() - t2)
 
         lines = [single_letters(zero_to_o(fix_choices(segs))) for segs in merge_lines(items)]
-        return to_paragraphs(lines)
+        paras = to_paragraphs(lines)
+        if self.spacer is not None:
+            from spacing import respace_paragraph
+            paras = [respace_paragraph(self.spacer, p) for p in paras]
+        return paras
 
 
 # ------------------------------------------------------------ 줄 묶기, 문단 만들기

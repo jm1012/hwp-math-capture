@@ -26,6 +26,7 @@ args = [
     sys.executable, "-m", "PyInstaller", "app.py", "--name", "수식캡처", "--noconfirm", "--clean",
     "--windowed", "--icon", "icon.ico",
     "--collect-all", "rapidocr",            # 설정 yaml, 글꼴 등 데이터 파일 포함
+    "--add-data", f"spacing_data{os.pathsep}spacing_data",   # 띄어쓰기 모델 (4.5MB)
     "--collect-binaries", "onnxruntime",
     "--hidden-import", "pystray._win32", "--hidden-import", "win32clipboard",
     "--copy-metadata", "rapidocr", "--copy-metadata", "onnxruntime", "--copy-metadata", "tokenizers",
