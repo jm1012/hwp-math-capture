@@ -1,0 +1,438 @@
+{
+ "model": "pix2tex",
+ "load_sec": 13.1,
+ "rows": [
+  {
+   "id": "frac_cm",
+   "gt": "\\frac{a+b}{c-d}",
+   "pred": "\\frac{a+b}{c-d}",
+   "exact": true,
+   "sim": 1.0,
+   "sec": 0.25,
+   "sem": true
+  },
+  {
+   "id": "frac_stix",
+   "gt": "\\frac{a+b}{c-d}",
+   "pred": "\\frac{a+b}{c-d}",
+   "exact": true,
+   "sim": 1.0,
+   "sec": 0.12,
+   "sem": true
+  },
+  {
+   "id": "frac_dv",
+   "gt": "\\frac{a+b}{c-d}",
+   "pred": "\\textstyle{\\frac{a+b}{c-b}}",
+   "exact": false,
+   "sim": 0.667,
+   "sec": 0.14,
+   "sem": false
+  },
+  {
+   "id": "quadratic_cm",
+   "gt": "x=\\frac{-b\\pm\\sqrt{b^{2}-4ac}}{2a}",
+   "pred": "\\mathcal{Q}\\longrightarrow\\frac{-b\\pm\\sqrt{b^{2}-4a c}}{2a}",
+   "exact": false,
+   "sim": 0.698,
+   "sec": 0.32,
+   "sem": false
+  },
+  {
+   "id": "quadratic_stix",
+   "gt": "x=\\frac{-b\\pm\\sqrt{b^{2}-4ac}}{2a}",
+   "pred": "\\chi\\ --\\frac{-b\\pm\\sqrt{b^{2}-4a c}}{2a}",
+   "exact": false,
+   "sim": 0.882,
+   "sec": 0.3,
+   "sem": false
+  },
+  {
+   "id": "quadratic_dv",
+   "gt": "x=\\frac{-b\\pm\\sqrt{b^{2}-4ac}}{2a}",
+   "pred": "X={\\frac{-b\\pm{\\sqrt{b^{2}-4\\partial C}}}{2\\partial}}",
+   "exact": false,
+   "sim": 0.732,
+   "sec": 0.37,
+   "sem": false
+  },
+  {
+   "id": "pythag_cm",
+   "gt": "a^{2}+b^{2}=c^{2}",
+   "pred": "a^{2}+b^{2}\\underline{{L}}\\underline{{0}}c^{2}",
+   "exact": false,
+   "sim": 0.426,
+   "sec": 0.36,
+   "sem": false
+  },
+  {
+   "id": "pythag_stix",
+   "gt": "a^{2}+b^{2}=c^{2}",
+   "pred": "a^{2}+b^{2}=c^{2}",
+   "exact": true,
+   "sim": 1.0,
+   "sec": 0.22,
+   "sem": true
+  },
+  {
+   "id": "pythag_dv",
+   "gt": "a^{2}+b^{2}=c^{2}",
+   "pred": "a^{2}+b^{2}=c^{2}",
+   "exact": true,
+   "sim": 1.0,
+   "sec": 0.2,
+   "sem": true
+  },
+  {
+   "id": "sum_cm",
+   "gt": "\\sum_{k=1}^{n}k=\\frac{n(n+1)}{2}",
+   "pred": "\\sum_{k=1}^{n}\\d1_{\\mathrm{e}}(q)\\;\\;1\\;\\;n=1(q^{2})\\;\\;n\\;\\;\\;n=1.\\;\\;n",
+   "exact": false,
+   "sim": 0.492,
+   "sec": 0.72,
+   "sem": false
+  },
+  {
+   "id": "sum_stix",
+   "gt": "\\sum_{k=1}^{n}k=\\frac{n(n+1)}{2}",
+   "pred": "\\sum_{k=1}^{n}k={\\frac{n(n+1)}{2}}",
+   "exact": false,
+   "sim": 0.966,
+   "sec": 0.47,
+   "sem": false
+  },
+  {
+   "id": "sum_dv",
+   "gt": "\\sum_{k=1}^{n}k=\\frac{n(n+1)}{2}",
+   "pred": "\\sum_{k=1}^{n}K=\\frac{n(n+1)}{2}",
+   "exact": false,
+   "sim": 0.964,
+   "sec": 0.39,
+   "sem": false
+  },
+  {
+   "id": "integral_cm",
+   "gt": "\\int_{0}^{1}x^{2}\\,dx=\\frac{1}{3}",
+   "pred": "\\int_{0}^{1}x^{2}\\,d x={\\textstyle{\\frac{1}{3}}}",
+   "exact": false,
+   "sim": 0.75,
+   "sec": 0.45,
+   "sem": false
+  },
+  {
+   "id": "integral_stix",
+   "gt": "\\int_{0}^{1}x^{2}\\,dx=\\frac{1}{3}",
+   "pred": "\\textstyle\\int_{0}^{1}x^{2}\\,d x={\\frac{1}{3}}",
+   "exact": false,
+   "sim": 0.778,
+   "sec": 0.34,
+   "sem": false
+  },
+  {
+   "id": "integral_dv",
+   "gt": "\\int_{0}^{1}x^{2}\\,dx=\\frac{1}{3}",
+   "pred": "\\textstyle\\int_{0}^{1}X^{2}\\,d X={\\frac{1}{3}}",
+   "exact": false,
+   "sim": 0.704,
+   "sec": 0.37,
+   "sem": false
+  },
+  {
+   "id": "limit_cm",
+   "gt": "\\lim_{x\\to0}\\frac{\\sin x}{x}=1",
+   "pred": "\\begin{array}{l}{{\\stackrel{\\cdot\\hat{l}}{\\hat{l}}_{\\mathrm{\\Delta1}}\\stackrel{\\cdot\\hat{l}\\hat{n}}{x}\\stackrel{\\cdot}{\\longrightarrow}\\hat{1}}}\\end{array}\\",
+   "exact": false,
+   "sim": 0.148,
+   "sec": 1.12,
+   "sem": false
+  },
+  {
+   "id": "limit_stix",
+   "gt": "\\lim_{x\\to0}\\frac{\\sin x}{x}=1",
+   "pred": "\\operatorname*{lim}_{x\\to0}{\\frac{\\sin x}{x}}=1",
+   "exact": false,
+   "sim": 0.897,
+   "sec": 0.32,
+   "sem": false
+  },
+  {
+   "id": "limit_dv",
+   "gt": "\\lim_{x\\to0}\\frac{\\sin x}{x}=1",
+   "pred": "\\operatorname*{lim}_{x\\to0}{\\frac{\\sin x}{x}}=1",
+   "exact": false,
+   "sim": 0.897,
+   "sec": 0.39,
+   "sem": false
+  },
+  {
+   "id": "deriv_cm",
+   "gt": "f'(x)=\\lim_{h\\to0}\\frac{f(x+h)-f(x)}{h}",
+   "pred": "\\int^{\\big/}{\\Big(}\\mathcal{A}{\\Big)}\\;{\\longrightarrow}\\;\\prod_{\\phantom{\\circ+\\gamma=}}^{*}\\operatorname{I\\!\\!\\!\\!\\mathrm{I\\!\\!II}}\\;\\frac{f(\\mathcal{A}+\\mathcal{I})-\\mathcal{I}(\\mathcal{A})}{\\rlap/l}",
+   "exact": false,
+   "sim": 0.262,
+   "sec": 1.68,
+   "sem": false
+  },
+  {
+   "id": "deriv_stix",
+   "gt": "f'(x)=\\lim_{h\\to0}\\frac{f(x+h)-f(x)}{h}",
+   "pred": "\\int^{\\prime}\\left(\\chi\\right)\\longrightarrow\\frac{\\left|\\mathbf{i}\\mathrm{I}\\right|\\int\\left(x+h\\right)-f(x)}{h}",
+   "exact": false,
+   "sim": 0.442,
+   "sec": 0.79,
+   "sem": false
+  },
+  {
+   "id": "deriv_dv",
+   "gt": "f'(x)=\\lim_{h\\to0}\\frac{f(x+h)-f(x)}{h}",
+   "pred": "f^{\\prime}(X)=|\\mathrm{i}\\!|\\!|\\!|\\!|\\!|\\!\\!|\\!\\!|\\!\\!|\\!\\!|\\!\\!|\\!\\!|\\!\\!|\\!\\!|\\!\\!|\\!\\!\\!/(x\\!+\\!h)\\!\\!\\cdot\\!f\\!(x\\!)",
+   "exact": false,
+   "sim": 0.341,
+   "sec": 0.95,
+   "sem": false
+  },
+  {
+   "id": "log_cm",
+   "gt": "\\log_{a}xy=\\log_{a}x+\\log_{a}y",
+   "pred": "\\rfloor_{\\Theta_{\\mathcal{Q}}a}\\,x y=\\rfloor_{\\Theta_{\\mathcal{Q}}a}\\,x+\\ 1_{\\Theta_{\\mathcal{Q}}a}\\,y",
+   "exact": false,
+   "sim": 0.324,
+   "sec": 0.65,
+   "sem": false
+  },
+  {
+   "id": "log_stix",
+   "gt": "\\log_{a}xy=\\log_{a}x+\\log_{a}y",
+   "pred": "\\vert{\\bf0}_{\\Xi a}^{\\Theta}\\,x y=\\vert{\\bf0}_{\\Xi a}\\,x+\\vert{\\bf0}_{\\Xi a}^{\\Theta}\\,y",
+   "exact": false,
+   "sim": 0.294,
+   "sec": 0.57,
+   "sem": false
+  },
+  {
+   "id": "log_dv",
+   "gt": "\\log_{a}xy=\\log_{a}x+\\log_{a}y",
+   "pred": "\\log_{\\mathcal{B}}x y=\\log_{\\mathcal{B}}x+\\log_{\\mathcal{B}}y",
+   "exact": false,
+   "sim": 0.615,
+   "sec": 0.44,
+   "sem": false
+  },
+  {
+   "id": "trig_cm",
+   "gt": "\\sin^{2}\\theta+\\cos^{2}\\theta=1",
+   "pred": "\\sin^{2}\\theta+\\cos^{2}\\theta=1",
+   "exact": true,
+   "sim": 1.0,
+   "sec": 0.26,
+   "sem": true
+  },
+  {
+   "id": "trig_stix",
+   "gt": "\\sin^{2}\\theta+\\cos^{2}\\theta=1",
+   "pred": "\\sin^{2}\\theta+\\cos^{2}\\theta=1",
+   "exact": true,
+   "sim": 1.0,
+   "sec": 0.26,
+   "sem": true
+  },
+  {
+   "id": "trig_dv",
+   "gt": "\\sin^{2}\\theta+\\cos^{2}\\theta=1",
+   "pred": "\\sin^{2}\\theta+\\cos^{2}\\theta=1",
+   "exact": true,
+   "sim": 1.0,
+   "sec": 0.25,
+   "sem": true
+  },
+  {
+   "id": "nthroot_cm",
+   "gt": "\\sqrt[3]{x^{2}+1}",
+   "pred": "\\,^{3}{\\sqrt{\\,x^{2}+1\\,}}",
+   "exact": false,
+   "sim": 0.774,
+   "sec": 0.26,
+   "sem": false
+  },
+  {
+   "id": "nthroot_stix",
+   "gt": "\\sqrt[3]{x^{2}+1}",
+   "pred": "\\textstyle{{\\sqrt{x^{2}+1}}}",
+   "exact": false,
+   "sim": 0.585,
+   "sec": 0.22,
+   "sem": false
+  },
+  {
+   "id": "nthroot_dv",
+   "gt": "\\sqrt[3]{x^{2}+1}",
+   "pred": "\\textstyle{\\sqrt{x^{2}+1}}",
+   "exact": false,
+   "sim": 0.615,
+   "sec": 0.21,
+   "sem": false
+  },
+  {
+   "id": "euler_cm",
+   "gt": "e^{i\\pi}+1=0",
+   "pred": "e^{i\\pi}\\leftarrow1\\longrightarrow\\emptyset",
+   "exact": false,
+   "sim": 0.327,
+   "sec": 0.19,
+   "sem": false
+  },
+  {
+   "id": "euler_stix",
+   "gt": "e^{i\\pi}+1=0",
+   "pred": "e^{i\\pi}+1\\underline{{{}}}=0",
+   "exact": false,
+   "sim": 0.6,
+   "sec": 0.21,
+   "sem": false
+  },
+  {
+   "id": "euler_dv",
+   "gt": "e^{i\\pi}+1=0",
+   "pred": "{\\tt\\in}^{i\\pi}+{\\tt\\cal\\ell}=0",
+   "exact": false,
+   "sim": 0.465,
+   "sec": 0.26,
+   "sem": false
+  },
+  {
+   "id": "binom_cm",
+   "gt": "(a+b)^{n}=\\sum_{k=0}^{n}\\binom{n}{k}a^{k}b^{n-k}",
+   "pred": "\\left(Q+b\\right)^{n}=\\sum_{k=0}^{n}{\\binom{n}{k}}a^{\\,k}b^{\\,n-\\,k}",
+   "exact": false,
+   "sim": 0.949,
+   "sec": 0.86,
+   "sem": false
+  },
+  {
+   "id": "binom_stix",
+   "gt": "(a+b)^{n}=\\sum_{k=0}^{n}\\binom{n}{k}a^{k}b^{n-k}",
+   "pred": "(a+b)^{n}=\\sum_{k=0}^{n}{\\binom{n}{k}}a^{k}b^{n-k}",
+   "exact": false,
+   "sim": 0.974,
+   "sec": 0.63,
+   "sem": true
+  },
+  {
+   "id": "binom_dv",
+   "gt": "(a+b)^{n}=\\sum_{k=0}^{n}\\binom{n}{k}a^{k}b^{n-k}",
+   "pred": "(\\mathcal{O}+b)^{n}=\\sum_{k=0}^{n}{\\binom{n}{k}}\\mathcal{O}^{k}J^{n-k}",
+   "exact": false,
+   "sim": 0.787,
+   "sec": 0.76,
+   "sem": false
+  },
+  {
+   "id": "ineq_cm",
+   "gt": "|x-3|\\leq 2",
+   "pred": "|x-3|\\leq2",
+   "exact": true,
+   "sim": 1.0,
+   "sec": 0.13,
+   "sem": true
+  },
+  {
+   "id": "ineq_stix",
+   "gt": "|x-3|\\leq 2",
+   "pred": "|x-3|\\leq2",
+   "exact": true,
+   "sim": 1.0,
+   "sec": 0.12,
+   "sem": true
+  },
+  {
+   "id": "ineq_dv",
+   "gt": "|x-3|\\leq 2",
+   "pred": "|x-3|\\leq2",
+   "exact": true,
+   "sim": 1.0,
+   "sec": 0.14,
+   "sem": true
+  },
+  {
+   "id": "vector_cm",
+   "gt": "\\vec{a}\\cdot\\vec{b}=|\\vec{a}||\\vec{b}|\\cos\\theta",
+   "pred": "\\vec{a}\\cdot\\vec{b}=|\\vec{a}||\\vec{b}|\\mathrm{cos}\\,\\theta",
+   "exact": false,
+   "sim": 0.963,
+   "sec": 0.44,
+   "sem": false
+  },
+  {
+   "id": "vector_stix",
+   "gt": "\\vec{a}\\cdot\\vec{b}=|\\vec{a}||\\vec{b}|\\cos\\theta",
+   "pred": "\\vec{a}\\cdot\\vec{b}=|\\vec{a}|\\vec{b}|\\mathrm{cos}\\,\\theta",
+   "exact": false,
+   "sim": 0.95,
+   "sec": 0.38,
+   "sem": false
+  },
+  {
+   "id": "vector_dv",
+   "gt": "\\vec{a}\\cdot\\vec{b}=|\\vec{a}||\\vec{b}|\\cos\\theta",
+   "pred": "\\vec{\\mathcal{A}}\\cdot\\vec{\\cal{D}}=|\\vec{\\mathcal{A}}||\\vec{\\cal{D}}|\\cos\\theta",
+   "exact": false,
+   "sim": 0.679,
+   "sec": 0.56,
+   "sem": false
+  },
+  {
+   "id": "seq_cm",
+   "gt": "a_{n}=a_{1}r^{n-1}",
+   "pred": "a_{n}\\underline{{{}}}=a_{1}\\tau^{n-1}",
+   "exact": false,
+   "sim": 0.553,
+   "sec": 0.34,
+   "sem": false
+  },
+  {
+   "id": "seq_stix",
+   "gt": "a_{n}=a_{1}r^{n-1}",
+   "pred": "a_{n}=a_{1}r^{n-1}",
+   "exact": true,
+   "sim": 1.0,
+   "sec": 0.19,
+   "sem": true
+  },
+  {
+   "id": "seq_dv",
+   "gt": "a_{n}=a_{1}r^{n-1}",
+   "pred": "\\partial_{I\\!\\!P}=\\partial_{1}I^{\\prime I}-1",
+   "exact": false,
+   "sim": 0.314,
+   "sec": 0.28,
+   "sem": false
+  },
+  {
+   "id": "set_cm",
+   "gt": "A\\cap B=\\{x\\mid x\\in A,\\ x\\in B\\}",
+   "pred": "A\\cap B=\\{x\\mid x\\in A,\\ x\\in B\\}",
+   "exact": true,
+   "sim": 1.0,
+   "sec": 0.34,
+   "sem": true
+  },
+  {
+   "id": "set_stix",
+   "gt": "A\\cap B=\\{x\\mid x\\in A,\\ x\\in B\\}",
+   "pred": "A\\cap B\\supseteq\\{x\\mid x\\in A,\\ x\\in B\\}",
+   "exact": false,
+   "sim": 0.839,
+   "sec": 0.24,
+   "sem": false
+  },
+  {
+   "id": "set_dv",
+   "gt": "A\\cap B=\\{x\\mid x\\in A,\\ x\\in B\\}",
+   "pred": "A\\cap B=\\{x\\mid x\\in A,\\ x\\in B\\}",
+   "exact": true,
+   "sim": 1.0,
+   "sec": 0.25,
+   "sem": true
+  }
+ ]
+}

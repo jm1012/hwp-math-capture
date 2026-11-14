@@ -1,0 +1,7 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch
+texify==0.2.1
+transformers==4.57.6
+pillow==10.4.0
+pywin32
+pystray

@@ -1,0 +1,146 @@
+{
+ "frac": {
+  "latex": "\\frac{a+b}{c-d}",
+  "hwp": "{{a + b} over {c - d}}"
+ },
+ "quadratic": {
+  "latex": "x=\\frac{-b\\pm\\sqrt{b^{2}-4ac}}{2a}",
+  "hwp": "x = {{-b +- sqrt {b ^{2} - 4 a c}} over {2 a}}"
+ },
+ "pythag": {
+  "latex": "a^{2}+b^{2}=c^{2}",
+  "hwp": "a ^{2} + b ^{2} = c ^{2}"
+ },
+ "sum": {
+  "latex": "\\sum_{k=1}^{n}k=\\frac{n(n+1)}{2}",
+  "hwp": "sum _{k = 1} ^{n} k = {{n ( n + 1 )} over {2}}"
+ },
+ "integral": {
+  "latex": "\\int_{0}^{1}x^{2}\\,dx=\\frac{1}{3}",
+  "hwp": "int _{0} ^{1} x ^{2} ` d x = {{1} over {3}}"
+ },
+ "limit": {
+  "latex": "\\lim_{x\\to0}\\frac{\\sin x}{x}=1",
+  "hwp": "lim _{x -> 0} {{sin x} over {x}} = 1"
+ },
+ "deriv": {
+  "latex": "f'(x)=\\lim_{h\\to0}\\frac{f(x+h)-f(x)}{h}",
+  "hwp": "f prime ( x ) = lim _{h -> 0} {{f ( x + h ) - f ( x )} over {h}}"
+ },
+ "log": {
+  "latex": "\\log_{a}xy=\\log_{a}x+\\log_{a}y",
+  "hwp": "log _{a} x y = log _{a} x + log _{a} y"
+ },
+ "trig": {
+  "latex": "\\sin^{2}\\theta+\\cos^{2}\\theta=1",
+  "hwp": "sin ^{2} theta + cos ^{2} theta = 1"
+ },
+ "nthroot": {
+  "latex": "\\sqrt[3]{x^{2}+1}",
+  "hwp": "root {3} of {x ^{2} + 1}"
+ },
+ "euler": {
+  "latex": "e^{i\\pi}+1=0",
+  "hwp": "e ^{i pi} + 1 = 0"
+ },
+ "binom": {
+  "latex": "(a+b)^{n}=\\sum_{k=0}^{n}\\binom{n}{k}a^{k}b^{n-k}",
+  "hwp": "( a + b ) ^{n} = sum _{k = 0} ^{n} LEFT ( {n} atop {k} RIGHT ) a ^{k} b ^{n - k}"
+ },
+ "ineq": {
+  "latex": "|x-3|\\leq 2",
+  "hwp": "| x - 3 | LEQ 2"
+ },
+ "vector": {
+  "latex": "\\vec{a}\\cdot\\vec{b}=|\\vec{a}||\\vec{b}|\\cos\\theta",
+  "hwp": "vec {a} cdot vec {b} = | vec {a} | | vec {b} | cos theta"
+ },
+ "seq": {
+  "latex": "a_{n}=a_{1}r^{n-1}",
+  "hwp": "a _{n} = a _{1} r ^{n - 1}"
+ },
+ "set": {
+  "latex": "A\\cap B=\\{x\\mid x\\in A,\\ x\\in B\\}",
+  "hwp": "A ∩ B = lbrace x | x IN A , ~ x IN B rbrace"
+ },
+ "matrix": {
+  "latex": "A=\\begin{pmatrix}1&2\\\\3&4\\end{pmatrix}",
+  "hwp": "A = pmatrix{1 & 2 # 3 & 4}"
+ },
+ "det": {
+  "latex": "\\begin{vmatrix}a&b\\\\c&d\\end{vmatrix}=ad-bc",
+  "hwp": "dmatrix{a & b # c & d} = a d - b c"
+ },
+ "cases": {
+  "latex": "f(x)=\\begin{cases}x^{2} & (x\\geq0)\\\\-x & (x<0)\\end{cases}",
+  "hwp": "f ( x ) = cases{x ^{2} & ( x GEQ 0 ) # - x & ( x < 0 )}"
+ },
+ "leftright": {
+  "latex": "\\left(\\frac{1}{2}\\right)^{n}",
+  "hwp": "LEFT ( {{1} over {2}} RIGHT ) ^{n}"
+ },
+ "abs": {
+  "latex": "\\left|x-\\frac{1}{x}\\right|\\le 1",
+  "hwp": "LEFT | x - {{1} over {x}} RIGHT | LEQ 1"
+ },
+ "text": {
+  "latex": "P(A)=\\frac{n(A)}{n(S)}\\text{ (단, }n(S)\\neq0)",
+  "hwp": "P ( A ) = {{n ( A )} over {n ( S )}} \" (단, \" n ( S ) != 0 )"
+ },
+ "greekU": {
+  "latex": "\\Delta x \\cdot \\Sigma \\Omega",
+  "hwp": "DELTA x cdot SIGMA OMEGA"
+ },
+ "accent": {
+  "latex": "\\overline{AB}=\\hat{y}+\\tilde{z}+\\bar{x}",
+  "hwp": "bar {A B} = hat {y} + tilde {z} + bar {x}"
+ },
+ "arc": {
+  "latex": "\\overset{\\frown}{AB}",
+  "hwp": "arch {A B}"
+ },
+ "prime2": {
+  "latex": "f''(x)+g'(x)",
+  "hwp": "f prime prime ( x ) + g prime ( x )"
+ },
+ "integral2": {
+  "latex": "\\int_{a}^{b}f(x)\\,dx=\\left[F(x)\\right]_{a}^{b}",
+  "hwp": "int _{a} ^{b} f ( x ) ` d x = LEFT [ F ( x ) RIGHT ] _{a} ^{b}"
+ },
+ "texify_style": {
+  "latex": "\\operatorname*{lim}_{x\\to\\infty}\\left(1+\\frac{1}{x}\\right)^{x}=e",
+  "hwp": "lim _{x -> INF} LEFT ( 1 + {{1} over {x}} RIGHT ) ^{x} = e"
+ },
+ "subsup": {
+  "latex": "x_{1}^{2}+x_{2}^{2}",
+  "hwp": "x _{1} ^{2} + x _{2} ^{2}"
+ },
+ "combi": {
+  "latex": "{}_{n}\\mathrm{C}_{r}=\\frac{n!}{r!(n-r)!}",
+  "hwp": "{} _{n} {rm C} _{r} = {{n !} over {r ! ( n - r ) !}}"
+ },
+ "setbuilder": {
+  "latex": "\\{x\\,|\\,x^{2}<4\\}",
+  "hwp": "lbrace x ` | ` x ^{2} < 4 rbrace"
+ },
+ "nested": {
+  "latex": "\\sqrt{1+\\sqrt{1+\\sqrt{x}}}",
+  "hwp": "sqrt {1 + sqrt {1 + sqrt {x}}}"
+ },
+ "dfrac": {
+  "latex": "\\dfrac{\\dfrac{1}{a}+\\dfrac{1}{b}}{a+b}",
+  "hwp": "{{{{1} over {a}} + {{1} over {b}}} over {a + b}}"
+ },
+ "logic": {
+  "latex": "p\\Rightarrow q \\iff \\neg q\\Rightarrow\\neg p",
+  "hwp": "p RARROW q LRARROW ¬ q RARROW ¬ p"
+ },
+ "inf": {
+  "latex": "\\sum_{n=1}^{\\infty}\\frac{1}{n^{2}}=\\frac{\\pi^{2}}{6}",
+  "hwp": "sum _{n = 1} ^{INF} {{1} over {n ^{2}}} = {{pi ^{2}} over {6}}"
+ },
+ "aligned": {
+  "latex": "\\begin{aligned}x+y&=3\\\\x-y&=1\\end{aligned}",
+  "hwp": "eqalign{x + y & = 3 # x - y & = 1}"
+ }
+}
