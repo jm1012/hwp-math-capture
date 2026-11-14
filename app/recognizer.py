@@ -1,4 +1,8 @@
-"""수식 이미지 → LaTeX (texify, 무료 오픈소스 모델, CPU에서 동작)"""
+"""인식 엔진 묶음 (모두 무료 오픈소스, CPU 에서 onnxruntime 으로 동작)
+
+- 수식 한 개:   Pix2Text MFR  → LaTeX
+- 지문(글자+수식): Pix2Text MFD(수식 위치) + PaddleOCR 한국어 + MFR  → 문단 목록
+"""
 from __future__ import annotations
 
 import threading
@@ -8,8 +12,8 @@ from PIL import Image, ImageOps
 
 class Recognizer:
     def __init__(self):
-        self._model = None
-        self._processor = None
+        self.mfr = None
+        self.passage = None
         self._lock = threading.Lock()
         self.ready = threading.Event()
         self.error: Exception | None = None
@@ -19,26 +23,28 @@ class Recognizer:
 
     def _load(self):
         try:
-            # 실행파일(.exe)로 묶였거나 옆에 model 폴더가 있으면 그 모델을 오프라인으로 사용
-            import os, sys
-            base = getattr(sys, "_MEIPASS", None) or os.path.dirname(os.path.abspath(sys.argv[0]))
-            for cand in (os.path.join(os.path.dirname(sys.executable), "model"), os.path.join(base, "model")):
-                if os.path.isfile(os.path.join(cand, "config.json")):
-                    os.environ["MODEL_CHECKPOINT"] = cand
-                    os.environ["HF_HUB_OFFLINE"] = "1"
-                    os.environ["TRANSFORMERS_OFFLINE"] = "1"
-                    break
-            # texify 0.2.1 과 최신 transformers 를 같이 쓸 때 설정 출력에서 나는 오류 우회
-            from transformers import PretrainedConfig
-            PretrainedConfig.__repr__ = lambda self: self.__class__.__name__
-            from texify.model.model import load_model
-            from texify.model.processor import load_processor
-            self._model = load_model()
-            self._processor = load_processor()
+            import models
+            miss = models.missing()
+            if miss:
+                raise FileNotFoundError(f"모델 파일이 없습니다 ({models.model_dir()}): {', '.join(miss)}\n"
+                                        "소스에서 실행 중이면 'python models.py' 로 받으세요.")
+            from mfd import MFD
+            from mfr import MFR
+            from passage import PassageReader
+            self.mfr = MFR(models.path("mfr"))
+            self.passage = PassageReader(
+                MFD(models.path("mfd/pix2text-mfd-1.5.onnx")), self.mfr,
+                models.path("ocr/det.onnx"), models.path("ocr/rec_korean.onnx"),
+                models.path("ocr/rec_korean_dict.txt"))
         except Exception as e:  # noqa: BLE001
             self.error = e
         finally:
             self.ready.set()
+
+    def _wait(self):
+        self.ready.wait()
+        if self.error:
+            raise RuntimeError(f"인식 모델을 불러오지 못했습니다: {self.error}")
 
     @staticmethod
     def _prepare(img: Image.Image) -> Image.Image:
@@ -47,21 +53,17 @@ class Recognizer:
         gray = ImageOps.grayscale(img)
         if sum(gray.resize((16, 16)).getdata()) / 256 < 110:
             img = ImageOps.invert(img)
-        # 여백을 조금 줘야 인식이 안정적
-        return ImageOps.expand(img, border=12, fill="white")
+        return img
 
     def recognize(self, img: Image.Image) -> str:
-        self.ready.wait()
-        if self.error:
-            raise RuntimeError(f"인식 모델을 불러오지 못했습니다: {self.error}")
-        from texify.inference import batch_inference
+        """수식 한 개 → LaTeX"""
+        from latex_fix import clean_latex
+        self._wait()
         with self._lock:
-            return batch_inference([self._prepare(img)], self._model, self._processor)[0]
+            return clean_latex(self.mfr([self._prepare(img)])[0])
 
-
-def strip_math(text: str) -> str:
-    """texify 출력에서 $$ ... $$ 수식 부분만 꺼낸다. 여러 개면 줄바꿈으로 잇는다."""
-    import re
-    parts = re.findall(r"\$\$(.+?)\$\$|\$(.+?)\$", text, flags=re.S)
-    found = [a or b for a, b in parts]
-    return " \\\\ ".join(p.strip() for p in found) if found else text.strip()
+    def read_passage(self, img: Image.Image) -> list[list[tuple[str, str]]]:
+        """글자+수식 지문 → 문단 목록 [[("text", …), ("math", LaTeX), …], …]"""
+        self._wait()
+        with self._lock:
+            return self.passage(self._prepare(img))
