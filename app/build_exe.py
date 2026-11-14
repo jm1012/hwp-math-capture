@@ -1,5 +1,5 @@
 r"""실행파일 만들기 (Windows, app 폴더에서):  .venv\Scripts\python build_exe.py
-결과: dist\수식캡처\ 폴더 (수식캡처.exe + model\)  →  dist\수식캡처.zip
+결과: dist\수식캡처\ 폴더 (수식캡처.exe + model\)  →  dist\hwp-math-capture-windows.zip (GitHub는 한글 파일명을 바꿔 버려서 영문)
 """
 import os, shutil, subprocess, sys
 
@@ -81,5 +81,5 @@ with open(os.path.join(out, "사용법.txt"), "w", encoding="utf-8") as f:
             "단축키(기본 Ctrl+Shift+Q)를 누르고 수식을 드래그 → 한글에서 Ctrl+V.\n"
             "끄기: 작업 표시줄의 '수식 캡처' 창에서 [종료].\n"
             "처음 실행 때 'Windows의 PC 보호' 창이 뜨면 [추가 정보] → [실행].\n")
-shutil.make_archive(os.path.join("dist", "수식캡처"), "zip", "dist", "수식캡처")
-print("완료:", os.path.abspath(out), "/", os.path.abspath(out) + ".zip")
+zip_path = shutil.make_archive(os.path.join("dist", "hwp-math-capture-windows"), "zip", "dist", "수식캡처")
+print("완료:", os.path.abspath(out), "/", os.path.abspath(zip_path))

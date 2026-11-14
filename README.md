@@ -18,7 +18,7 @@
 
 ## 설치 (실행 파일)
 
-1. [Releases](../../releases)에서 `수식캡처.zip`을 받아 원하는 곳에 압축을 풉니다.
+1. [Releases](../../releases)에서 `hwp-math-capture-windows.zip`을 받아 원하는 곳에 압축을 풉니다.
 2. `수식캡처.exe`를 실행합니다. 처음 실행 때 "Windows의 PC 보호" 창이 뜨면 **[추가 정보] → [실행]**.
 3. 오른쪽 아래에 "준비 완료" 알림이 뜨면 사용할 수 있습니다 (모델 로드 10~30초).
 
@@ -44,7 +44,7 @@ setup.bat          :: 가상환경 만들고 필요한 패키지 설치 (처음 
 수식캡처.bat        :: 실행
 ```
 
-실행 파일 만들기: `app` 폴더에서 `.venv\Scripts\python build_exe.py` → `dist\수식캡처.zip`
+실행 파일 만들기: `app` 폴더에서 `.venv\Scripts\python build_exe.py` → `dist\hwp-math-capture-windows.zip`
 
 ## 폴더 구성
 
