@@ -113,6 +113,9 @@ def normalize_p2t(s: str) -> str:
         if mo:
             sub, k = _group(mo.group(1), 0); base, _ = _group(mo.group(1), k)
             return f"{base}_{{{sub}}}^{{{a}}}"
+        mo = re.fullmatch(r"[_^]\s*(.*)", b.strip(), re.S)
+        if mo:  # \overset{x}{_ 0}: 밑글자 없이 첨자만 있는 엉터리 (적분 구간에서 나옴) → 첨자 내용만
+            return _group(mo.group(1), 0)[0]
         if re.match(r"\\(sum|prod|int|lim|bigcup|bigcap)(?![A-Za-z])", b.strip()):
             return f"{b.strip()}^{{{a}}}"
         return f"\\overset{{{a}}}{{{b}}}"
@@ -121,9 +124,10 @@ def normalize_p2t(s: str) -> str:
         s = re.sub(r"\\overset(?=\s*\{)", r"\\OVERSET", s)
         s = _rewrite(s, "OVERSET", over, 2)
         s = s.replace("\\overset", "\\overset")
-    # 왼쪽 중괄호 + array/matrix → cases (구간별 함수)
-    s = re.sub(r"\\left\s*\\\{\s*\\begin\{(?:array|matrix|aligned)\}(?:\s*\{[^{}]*\})?(.*?)\\end\{(?:array|matrix|aligned)\}\s*\\right\s*\.",
-               lambda m: "\\begin{cases}" + re.sub(r"\\\\\s*$", "", m.group(1).strip()) + "\\end{cases}", s, flags=re.S)
+    # 왼쪽 중괄호 + array/matrix → cases (구간별 함수), cases 속 빈 줄 제거
+    s = brace_to_cases(s)
+    s = re.sub(r"\\begin\{cases\}(.*?)\\end\{cases\}", lambda m: "\\begin{cases}" + _rows(m.group(1)) + "\\end{cases}",
+               s, flags=re.S)
     # 식 전체를 감싼 { … } 제거
     t = s.strip()
     while t.startswith("{"):
@@ -145,3 +149,52 @@ def split_tail(latex: str) -> tuple[str, str]:
     if m and m.start() > 0:
         return latex[:m.start()].rstrip(), "이"
     return latex, ""
+
+
+# ---- 왼쪽 중괄호 + 표(array/matrix/aligned) → cases (구간별 함수) ----
+# 중괄호 + 행렬은 수능 문제에 거의 나오지 않으므로, 왼쪽 중괄호 뒤의 표는 구간 중괄호로 본다.
+# 단, 오른쪽 중괄호(\\right\\})까지 있으면 집합/행렬로 보고 그대로 둔다.
+_BRACE_START = re.compile(
+    r"(\{\s*)?(?:\\left|\\[Bb]igg?l?|\\[Bb]igl?)?\s*\\\{\s*(\}\s*)?(?:\\[!,;:]\s*)*(\{\s*)?\\begin\{(array|matrix|aligned)\}")
+
+
+def _rows(body: str) -> str:
+    """표 내용 → cases 내용: 열 지정 { l l } 과 빈 줄({ } & { }) 제거"""
+    body = re.sub(r"^\s*\{[lcr\s|]*\}", "", body)
+    rows = [r.strip() for r in re.split(r"\\\\", body)]
+    keep = [r for r in rows if re.sub(r"[{}&\s]|\\[,;:! ]|\\q?quad", "", r)]
+    return " \\\\ ".join(keep)
+
+
+def brace_to_cases(s: str) -> str:
+    pos = 0
+    while True:
+        m = _BRACE_START.search(s, pos)
+        if not m:
+            return s
+        env = m.group(4)
+        tok = re.compile(r"\\(begin|end)\{" + env + r"\}")
+        depth, i = 1, m.end()
+        while depth:
+            t = tok.search(s, i)
+            if not t:
+                return s
+            depth += 1 if t.group(1) == "begin" else -1
+            i = t.end()
+        body = s[m.end():i - len("\\end{%s}" % env)]
+        j = i
+        # \begin 앞에 연 { 와, 중괄호를 감싼 { (닫는 } 가 \{ 바로 뒤에 없을 때) 의 짝을 닫음
+        for opened in (m.group(3), m.group(1) if not m.group(2) else None):
+            if opened:
+                t = re.compile(r"\s*\}").match(s, j)
+                if t:
+                    j = t.end()
+        r = re.compile(r"\s*\\right\s*(\.|\\\}|\\rbrace)").match(s, j)
+        if r and r.group(1) != ".":
+            pos = m.end()
+            continue
+        if r:
+            j = r.end()
+        new = "\\begin{cases}" + _rows(body) + "\\end{cases}"
+        s = s[:m.start()] + new + s[j:]
+        pos = m.start() + len(new)

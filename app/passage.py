@@ -30,6 +30,19 @@ def _inter(a, b):
 
 
 CHOICE_MARKS = "①②③④⑤"
+JAMO_HEAD = re.compile(r"^[7ㄱ¬LㄴlICcEㄷㄹ=]\s*[.,·]")
+
+
+def _leftmost(w, ws):
+    """같은 줄에서 가장 왼쪽 단어인지"""
+    y0, y1 = w["box"][1], w["box"][3]
+    for o in ws:
+        if o is w or o["box"][0] >= w["box"][0]:
+            continue
+        ov = min(y1, o["box"][3]) - max(y0, o["box"][1])
+        if ov > 0.5 * min(y1 - y0, o["box"][3] - o["box"][1]):
+            return False
+    return True
 
 
 def _ink_box(gray, b, th=160, pad=2):
@@ -92,7 +105,10 @@ class PassageReader:
         r = (self.ocr_text if text_pass else self.ocr)(np.asarray(img)[:, :, ::-1], return_word_box=True)
         out = []
         for line in (r.word_results or []):
-            for txt, _sc, box in line:
+            for item in line:
+                if len(item) != 3 or not item[2]:  # 글자를 못 읽은 줄은 빈 항목이 섞여 나옴 (예전엔 여기서 멈춤)
+                    continue
+                txt, _sc, box = item
                 xs = [p[0] for p in box]; ys = [p[1] for p in box]
                 out.append({"box": [min(xs), min(ys), max(xs), max(ys)], "val": txt})
         return out
@@ -151,7 +167,7 @@ class PassageReader:
                     break
         return b
 
-    def _marks(self, img, lh):
+    def _marks(self, img, lh, ws=()):
         import marks
         g = np.asarray(img.convert("L"))
         rec = lambda b: self._rec_one(img, b)  # noqa: E731
@@ -161,6 +177,21 @@ class PassageReader:
                       for b, ch in marks.find_boxes(g, lh, rec)]
         except Exception:  # noqa: BLE001  찾지 못해도 나머지는 진행
             return []
+        # <보기> 문제: 보기 ①~⑤ 의 값(ㄱ, ㄴ, ㄷ)을 모양으로 읽음
+        ch = [(it["box"], it["val"]) for it in items if it["val"] in CHOICE_MARKS]
+        if re.search(r"보\s*기", "".join(w["val"] for w in ws)):
+            try:
+                if ch:
+                    items += [{"box": b, "kind": "text", "val": v} for b, v in marks.read_jamo_choices(g, ch, lh)]
+                top = min(o["box"][1] for o in ws)
+                for w in ws:  # 보기 안의 줄머리 ㄱ. ㄴ. ㄷ. (첫 줄의 문제 번호 '7.' 은 제외)
+                    if not JAMO_HEAD.match(w["val"]) or not _leftmost(w, ws) or w["box"][1] < top + 0.5 * lh:
+                        continue
+                    r = marks.read_jamo_label(g, w["box"], lh)
+                    if r:
+                        items.append({"box": r[0], "kind": "text", "val": r[1]})
+            except Exception:  # noqa: BLE001
+                pass
         return items
 
     # ------------------------------------------------------------ 전체
@@ -178,7 +209,7 @@ class PassageReader:
         cw = cws[len(cws) // 2] if cws else 0.75 * lh
 
         # 원문자(㉠, ㉮)와 네모 칸 (가): 찾아서 기록하고 가림
-        mark_items = self._marks(img, lh)
+        mark_items = self._marks(img, lh, ws)
         # 보기 번호 ①~⑤ 는 수식 검출 그림에서는 남겨 둔다: 지우면 빈칸으로 띄엄띄엄 늘어선 보기 줄 전체를
         # 수식 검출이 표(array) 하나로 잡아 버림. 글자 OCR 그림에서만 가린다.
         choice_items = [it for it in mark_items if it["val"] in CHOICE_MARKS]

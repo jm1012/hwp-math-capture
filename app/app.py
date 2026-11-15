@@ -232,16 +232,21 @@ class App:
                                     ms=0, color="#d1242f")
                     self.open_hotkey_dialog(mode)
                 elif ev == "quit":
-                    if self.tray:
-                        self.tray.stop()
-                    for hk in self.hotkeys.values():
-                        hk.stop()
-                    self.root.destroy()
-                    return
+                    try:
+                        if self.tray:
+                            self.tray.stop()
+                        for hk in self.hotkeys.values():
+                            hk.stop()
+                        self.root.destroy()
+                    finally:
+                        os._exit(0)  # 인식 중인 작업 스레드가 남아 있어도 바로 끝냄
                 elif kind == "result":
                     self._show_result(*ev[1:])
         except queue.Empty:
             pass
+        except Exception:  # noqa: BLE001  한 번의 오류로 이벤트 처리가 멈추면 종료도 안 됨
+            traceback.print_exc()
+            self.busy = False
         self.root.after(80, self._poll)
 
     def _hk(self, mode="formula"):
@@ -353,7 +358,7 @@ class App:
         if kind == "ok":
             self.toast.show(f"복사됨 ({dt:.1f}초) — 한글에서 Ctrl+V", body, ms=7000, color="#1a7f37")
         else:
-            self.toast.show("인식 실패", a, ms=8000, color="#d1242f")
+            self.toast.show("인식 실패", body, ms=8000, color="#d1242f")
 
     def run(self):
         self.root.mainloop()
