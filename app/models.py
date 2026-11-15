@@ -2,6 +2,7 @@
 
 model/
   mfr/  수식 인식   Pix2Text MFR 1.5 (MIT)          encoder_model.onnx, decoder_model.onnx, tokenizer.json
+                                                  + prepare() 가 만드는 encoder_int8.onnx, decoder_kv.npz (속도용)
   mfd/  수식 위치   Pix2Text MFD 1.5 (MIT / AGPL-3.0) pix2text-mfd-1.5.onnx
   ocr/  한글 OCR   PaddleOCR PP-OCRv5 (Apache-2.0)  det.onnx, rec_korean.onnx, rec_korean_dict.txt
 """
@@ -30,7 +31,7 @@ def model_dir() -> str:
         cands.append(os.path.join(base, "model"))
     cands.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "model"))
     for c in cands:
-        if os.path.isfile(os.path.join(c, "mfr", "encoder_model.onnx")):
+        if os.path.isfile(os.path.join(c, "mfr", "tokenizer.json")):
             return c
     return cands[-1]
 
@@ -39,10 +40,15 @@ def path(rel: str) -> str:
     return os.path.join(model_dir(), *rel.split("/"))
 
 
-def missing(d: str | None = None) -> list[str]:
+# 실행에는 둘 중 하나만 있으면 됨 (배포판은 빠른 쪽만 넣음)
+ALT = {"mfr/encoder_model.onnx": "mfr/encoder_int8.onnx", "mfr/decoder_model.onnx": "mfr/decoder_kv.npz"}
+
+
+def missing(d: str | None = None, for_run: bool = True) -> list[str]:
     d = d or model_dir()
+    has = lambda k: os.path.isfile(os.path.join(d, *k.split("/")))  # noqa: E731
     need = [k for k in FILES if not k.endswith(".yml")] + ["ocr/rec_korean_dict.txt"]
-    return [k for k in need if not os.path.isfile(os.path.join(d, *k.split("/")))]
+    return [k for k in need if not has(k) and not (for_run and k in ALT and has(ALT[k]))]
 
 
 def download(d: str | None = None, log=print) -> str:
@@ -69,5 +75,19 @@ def download(d: str | None = None, log=print) -> str:
     return d
 
 
+def prepare(d: str | None = None, log=print) -> str:
+    """속도용 파일을 만든다 (빌드할 때 한 번, onnx 패키지 필요). 없어도 앱은 원래 방식으로 동작."""
+    from mfr import export_decoder_npz, quantize_encoder
+    d = d or model_dir()
+    m = os.path.join(d, "mfr")
+    if not os.path.isfile(os.path.join(m, "decoder_kv.npz")):
+        log("만드는 중: mfr/decoder_kv.npz")
+        export_decoder_npz(os.path.join(m, "decoder_model.onnx"), os.path.join(m, "decoder_kv.npz"))
+    if not os.path.isfile(os.path.join(m, "encoder_int8.onnx")):
+        log("만드는 중: mfr/encoder_int8.onnx")
+        quantize_encoder(os.path.join(m, "encoder_model.onnx"), os.path.join(m, "encoder_int8.onnx"))
+    return d
+
+
 if __name__ == "__main__":
-    print("모델 폴더:", download())
+    print("모델 폴더:", prepare(download()))

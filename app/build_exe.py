@@ -5,11 +5,11 @@ import os, shutil, subprocess, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 os.chdir(HERE)
-subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "pyinstaller", "pefile"])
+subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "pyinstaller", "pefile", "onnx"])
 
 # 1) 모델 파일 (없으면 Hugging Face 에서 받음)
 import models
-model_src = models.download(os.path.join(HERE, "model"))
+model_src = models.prepare(models.download(os.path.join(HERE, "model")))  # + int8 인코더, KV 캐시 가중치
 if models.missing(model_src):
     sys.exit(f"모델 파일이 없습니다: {models.missing(model_src)}")
 
@@ -31,7 +31,7 @@ args = [
     "--hidden-import", "pystray._win32", "--hidden-import", "win32clipboard",
     "--copy-metadata", "rapidocr", "--copy-metadata", "onnxruntime", "--copy-metadata", "tokenizers",
     "--copy-metadata", "numpy", "--copy-metadata", "pyyaml",
-    "--exclude-module", "torch", "--exclude-module", "matplotlib",
+    "--exclude-module", "torch", "--exclude-module", "matplotlib", "--exclude-module", "onnx",
 ]
 subprocess.check_call(args)
 
@@ -74,7 +74,12 @@ if _missing:
     sys.exit("빌드 실패: 번들에 없는 DLL 이 있습니다 (위 목록)")
 print(f"DLL 의존성 검사 통과 ({_n}개 파일)")
 
-shutil.copytree(model_src, os.path.join(out, "model"), dirs_exist_ok=True)
+# 원본 인코더/디코더(약 120MB)는 빠른 파일(int8 인코더, KV 캐시 가중치)로 대신하므로 넣지 않음
+shutil.copytree(model_src, os.path.join(out, "model"), dirs_exist_ok=True,
+                ignore=lambda d, names: [n for n in names if n in ("encoder_model.onnx", "decoder_model.onnx")
+                                         or n.endswith((".part", ".part.onnx", ".part.npz"))])
+if models.missing(os.path.join(out, "model")):
+    sys.exit(f"번들 모델 파일이 없습니다: {models.missing(os.path.join(out, 'model'))}")
 with open(os.path.join(out, "사용법.txt"), "w", encoding="utf-8") as f:
     f.write("수식캡처.exe 를 실행하세요.\n"
             "수식 하나: 단축키(기본 Ctrl+Shift+Q)를 누르고 수식을 드래그 → 한글에서 Ctrl+V.\n"
