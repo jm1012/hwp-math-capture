@@ -74,7 +74,7 @@ ACCENTS = {"vec": "vec", "overrightarrow": "vec", "overleftrightarrow": "dyad",
            "bar": "bar", "overline": "bar", "hat": "hat", "widehat": "hat",
            "tilde": "tilde", "widetilde": "tilde", "dot": "dot", "ddot": "ddot",
            "acute": "acute", "grave": "grave", "check": "check", "breve": "arch",
-           "underline": "under", "boxed": "BOX"}
+           "underline": "under", "boxed": "BOX", "fbox": "BOX", "framebox": "BOX"}
 ENVS = {"matrix": "matrix", "pmatrix": "pmatrix", "bmatrix": "bmatrix",
         "vmatrix": "dmatrix", "Vmatrix": "dmatrix", "smallmatrix": "matrix",
         "cases": "cases", "aligned": "eqalign", "align": "eqalign", "align*": "eqalign",

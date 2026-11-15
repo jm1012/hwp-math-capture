@@ -309,13 +309,16 @@ class App:
         t0 = time.time()
         try:
             from latex2hwp import latex_to_hwp
-            from hwp_clipboard import set_equation_clipboard
-            latex = self.rec.recognize(img)
+            from hwp_clipboard import set_equation_clipboard, set_passage_clipboard
+            latex, tail = self.rec.recognize_full(img)
             script = latex_to_hwp(latex)
-            set_equation_clipboard(script, plain_text=latex)
+            if tail:  # 점선 뒤 원문자 "…… ㉠" 는 수식 뒤에 글자로
+                set_passage_clipboard([[("eq", script), ("text", tail)]], plain_text=f"${latex}${tail}")
+            else:
+                set_equation_clipboard(script, plain_text=latex)
             with open(LOG_PATH, "a", encoding="utf-8") as f:
-                f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}\t{latex}\t{script}\n")
-            self.events.put(("result", "ok", f"LaTeX: {latex}\n한글: {script}", time.time() - t0))
+                f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}\t{latex}{tail}\t{script}\n")
+            self.events.put(("result", "ok", f"LaTeX: {latex}{tail}\n한글: {script}{tail}", time.time() - t0))
         except Exception as e:  # noqa: BLE001
             traceback.print_exc()
             self.events.put(("result", "err", str(e), 0))
