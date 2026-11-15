@@ -14,6 +14,13 @@ def clean_latex(s: str) -> str:
     m = re.fullmatch(r"(?:\{\s*\}\s*)?\^\s*\{\s*(.+?)\s*\}", s)
     if m: s = m.group(1)
     s = re.sub(r"^\\mathbf\{\\(?:mu|Sigma)\}", "", s)
+    # 글자 크기 명령과 그 뒤 공백 제거: \mathrm { \scriptsize ~ A } -> \mathrm { A }
+    s = re.sub(r"\\(?:scriptscriptstyle|tiny|scriptsize|footnotesize|small|normalsize|large|Large|LARGE|huge|Huge)"
+               r"(?![A-Za-z])(?:\s|~|\\[,;:! ])*", "", s)
+    # 빈 첨자: a _ { n } ^ { } -> a _ { n } (한글에서 빈 칸 첨자가 생김)
+    s = re.sub(r"\s*[\^_]\s*\{\s*\}", "", s)
+    # 글꼴 묶음 맨 앞의 공백: \mathrm { ~ A } -> \mathrm { A }
+    s = re.sub(r"(\\(?:mathrm|textrm|mathit|mathbf|mathsf|operatorname)\s*\{)(?:\s|~|\\[,;:! ])+", r"\1", s)
     return s.strip()
 
 def fix_choices(segs):
