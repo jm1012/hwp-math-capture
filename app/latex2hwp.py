@@ -82,6 +82,7 @@ ENVS = {"matrix": "matrix", "pmatrix": "pmatrix", "bmatrix": "bmatrix",
 DROP = {"displaystyle", "textstyle", "scriptstyle", "limits", "nolimits", "left.",
         "right.", "big", "Big", "bigg", "Bigg", "bigl", "bigr", "Bigl", "Bigr",
         "biggl", "biggr", "Biggl", "Biggr", "nonumber", "notag", "mathstrut", "strut",
+        "allowbreak", "nobreak", "relax", "mathop",
         # 글자 크기 명령: 한글 수식에 없는 문법이고, 인식기가 작은 글씨(점 이름 등)에 붙여 내는 것이라 버림
         "scriptscriptstyle", "tiny", "scriptsize", "footnotesize", "small", "normalsize", "large", "Large",
         "LARGE", "huge", "Huge"}

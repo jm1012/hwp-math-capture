@@ -5,7 +5,17 @@ import re
 CIRC = "①②③④⑤"
 
 def clean_latex(s: str) -> str:
-    s = normalize_p2t(s.strip())
+    s = s.strip()
+    # 괄호 없는 분수: \frac 12 -> \frac{1}{2}, \frac 1{x} -> \frac{1}{x} (그대로 두면 분모가 빠짐)
+    s = re.sub(r"\\([dtc]?frac)\s*([0-9A-Za-z])\s*([0-9A-Za-z])", r"\\\1{\2}{\3}", s)
+    s = re.sub(r"\\([dtc]?frac)\s*([0-9A-Za-z])\s*(?=\{)", r"\\\1{\2}", s)
+    # f ^ { ( } 1 ) -> f ( 1 ) : 인식기가 괄호를 위첨자로 잘못 붙임 (f(1) 을 이렇게 읽음)
+    s = re.sub(r"\s*\^\s*\{\s*\(\s*\}", " (", s)
+    # \textsc { N } -> N (작은 대문자 글꼴: 한글 수식에 없음)
+    s = re.sub(r"\\(?:textsc|mathsc)\s*\{\s*([^{}]*?)\s*\}", r"\1", s)
+    # a _ { n \mathop n + 1 } -> a _ { n + 1 } : 같은 글자가 \mathop 양쪽에 겹쳐 나옴
+    s = re.sub(r"(?<![A-Za-z\\])([A-Za-z0-9])\s*\\mathop\s*\1(?![A-Za-z])", r"\1", s)
+    s = normalize_p2t(s)
     # Pix2Text 는 토큰을 공백으로 나눔: \operatorname { s i n } -> \sin, 숫자 사이 공백 제거
     s = re.sub(r"\\operatorname\*?\s*\{\s*((?:[a-z]\s*)+)\}", lambda m: "\\" + m.group(1).replace(" ", ""), s)
     s = re.sub(r"(?<=\d) (?=\d)", "", s)
@@ -133,6 +143,7 @@ def normalize_p2t(s: str) -> str:
         s = s.replace("\\overset", "\\overset")
     # 왼쪽 중괄호 + array/matrix → cases (구간별 함수), cases 속 빈 줄 제거
     s = brace_to_cases(s)
+    s = stacked_to_frac(s)
     s = re.sub(r"\\begin\{cases\}(.*?)\\end\{cases\}", lambda m: "\\begin{cases}" + _rows(m.group(1)) + "\\end{cases}",
                s, flags=re.S)
     # 식 전체를 감싼 { … } 제거
@@ -158,6 +169,61 @@ def split_tail(latex: str) -> tuple[str, str]:
     return latex, ""
 
 
+# 수식 한가운데 끼어 든 '이' / '이고': "( 1 / 5 ) ^ { x - 3 } \diamond ] \pm f ( f ( x ) ) = 3 x"
+# (글자 '이고' 를 사이에 둔 두 수식을 수식 검출이 하나로 잡은 경우)
+_MID_I = re.compile(r"\s*(?:\\circ|\\Phi|\\phi|\\diamond|\\Diamond)\s*(?:\\!\s*)?(?:\\right\s*)?\\?[\]|]\s*(?P<go>\\pm\s*)?")
+
+
+def unwrap_single_row(latex: str) -> str:
+    """한 줄짜리 aligned/array 를 풀어 칸을 이어 붙인다: \\begin{aligned} {A} & {{} B} \\\\ \\end{aligned} -> A B"""
+    m = re.fullmatch(r"\s*\\begin\{(aligned|array)\}(?:\s*\{[lcr\s]*\})?(.*?)\\end\{\1\}\s*", latex, re.S)
+    if not m:
+        return latex
+    rows = [r for r in re.split(r"\\\\", m.group(2)) if re.sub(r"[{}&\s]", "", r)]
+    if len(rows) != 1 or "\\begin" in rows[0]:
+        return latex
+    cells = []
+    for c in rows[0].split("&"):
+        c = c.strip()
+        while c.startswith("{") and c.endswith("}"):
+            g, e = _group(c, 0)
+            if e != len(c):
+                break
+            c = g.strip()
+        c = re.sub(r"^\{\s*\}\s*", "", c)
+        if c:
+            cells.append(c)
+    return " ".join(cells)
+
+
+def split_i(latex: str) -> list[tuple[str, str]]:
+    """수식 속 '이'(이고) 모양 찌꺼기에서 수식을 나눈다. 결과 [(kind, val)] — kind 는 math/text.
+    통째로 찌꺼기면 글자 '이' 하나 (예: 이웃한 → $\\circ ]$웃한)"""
+    if _TAIL_I.fullmatch(" " + latex.strip()) or re.fullmatch(r"\s*(?:\\circ|\\diamond)\s*\]\s*", latex):
+        return [("text", "이")]
+    latex = unwrap_single_row(latex)
+    out, pos = [], 0
+    for m in _MID_I.finditer(latex):
+        if m.start() == 0:
+            continue
+        head = re.sub(r"\\[{}]", "", latex[:m.start()])
+        if head.count("{") != head.count("}") or head.count("\\begin") != head.count("\\end"):
+            continue  # 괄호·표 안에서 나누면 수식이 깨짐
+        before = latex[pos:m.start()].strip()
+        if before:
+            out.append(("math", before))
+        out.append(("text", "이고" if m.group("go") else "이"))
+        pos = m.end()
+    rest = latex[pos:].strip()
+    if rest:
+        out.append(("math", rest))
+    if len(out) > 1:  # 나눈 조각 앞뒤의 공백 명령(\, \ ~) 정리
+        sp = r"(?:\s|~|\\[,;:! ])+"
+        out = [(k, re.sub(rf"^{sp}|{sp}$", "", v) if k == "math" else v) for k, v in out]
+        out = [(k, v) for k, v in out if v]
+    return out or [("math", latex)]
+
+
 # ---- 왼쪽 중괄호 + 표(array/matrix/aligned) → cases (구간별 함수) ----
 # 중괄호 + 행렬은 수능 문제에 거의 나오지 않으므로, 왼쪽 중괄호 뒤의 표는 구간 중괄호로 본다.
 # 단, 오른쪽 중괄호(\\right\\})까지 있으면 집합/행렬로 보고 그대로 둔다.
@@ -171,6 +237,26 @@ def _rows(body: str) -> str:
     rows = [r.strip() for r in re.split(r"\\\\", body)]
     keep = [r for r in rows if re.sub(r"[{}&\s]|\\[,;:! ]|\\q?quad", "", r)]
     return " \\\\ ".join(keep)
+
+
+# 괄호 바로 안에 있을 때만 (두 줄짜리 식을 쌓은 표는 그대로): ( \begin{array} … \end{array} )
+_STACK = re.compile(r"(?<=\()(\s*)\\begin\{(array|matrix)\}(?:\s*\{\s*[lcr]?\s*\})?(.*?)\\end\{\2\}(?=\s*(?:\\right\s*)?\))",
+                    re.S)
+
+
+def stacked_to_frac(s: str) -> str:
+    """한 칸짜리 두 줄 표 → 분수: 인식기가 분수 막대를 못 보고 위아래로 쌓은 표로 냄
+    f \\left( \\begin{array}{c} {1} \\\\ {k^3} \\end{array} \\right) -> f \\left( \\frac{1}{k^3} \\right)"""
+    def rep(m):
+        body = m.group(3)
+        if "&" in body or "\\begin" in body:
+            return m.group(0)
+        rows = [r.strip() for r in re.split(r"\\\\", body)]
+        rows = [r for r in rows if re.sub(r"[{}\s]", "", r)]
+        if len(rows) != 2:
+            return m.group(0)
+        return "%s\\frac{%s}{%s}" % (m.group(1), rows[0], rows[1])
+    return _STACK.sub(rep, s)
 
 
 def brace_to_cases(s: str) -> str:

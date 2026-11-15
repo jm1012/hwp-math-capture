@@ -16,7 +16,9 @@ import time
 import numpy as np
 from PIL import Image, ImageDraw
 
-from latex_fix import clean_latex, fix_choices, single_letters, split_tail, zero_to_o
+from latex_fix import clean_latex, fix_choices, single_letters, split_i, split_tail, zero_to_o
+
+_TAIL_O = re.compile(r"^(.*\S)\s+(?:O|o|\\mathrm\s*\{\s*O\s*\}|\\circ)\s*$", re.S)
 
 HANGUL_RUN = re.compile(r"[가-힣ㄱ-ㅎ]+")
 
@@ -269,21 +271,55 @@ class PassageReader:
                     latex, tail = split_circle_tail(latex, np.asarray(crop.convert("L")), lh)
                 except Exception:  # noqa: BLE001
                     pass
-            if not latex.strip():
-                if tail:
-                    items.append({"box": b, "kind": "text", "val": tail.strip()})
-                continue
-            items.append({"box": b, "kind": "math", "val": latex})
-            if tail:  # 수식 오른쪽 끝 바로 뒤에 글자로 둔다
-                items.append({"box": [b[0] + 0.01, b[1], b[2], b[3]], "kind": "text", "val": tail})
+            if not tail:  # 수식 끝의 " O" 는 '이/인' 인 경우가 많음: 끝부분을 글자 OCR 로 다시 읽어 봄
+                mo = _TAIL_O.match(latex)
+                if mo:
+                    t, sc = self._rec_one(img, [max(b[0], b[2] - 1.3 * cw), b[1], b[2], b[3]])
+                    if sc > 0.6 and t and HANGUL_RUN.fullmatch(t):
+                        latex, tail = mo.group(1), t
+            if tail and tail.strip() == "이":  # '이' 인지 '인' 인지 끝부분을 다시 읽어 봄
+                t, sc = self._rec_one(img, [max(b[0], b[2] - 1.3 * cw), b[1], b[2], b[3]])
+                if sc > 0.7 and t in ("인", "이고", "이며", "이다", "이면"):
+                    tail = t
+            segs = split_i(latex) if latex.strip() else []
+            if tail:
+                segs.append(("text", tail.strip() if not segs else tail))
+            for i, (k, v) in enumerate(segs):  # 수식 오른쪽 끝 바로 뒤에 글자로 둔다 (x 를 조금씩 밀어 순서 유지)
+                items.append({"box": [b[0] + 0.01 * i, b[1], b[2], b[3]], "kind": k, "val": v})
         self.timing = (t1 - t0, t2 - t1, time.time() - t2)
 
         lines = [single_letters(zero_to_o(fix_choices(segs))) for segs in merge_lines(items)]
-        paras = to_paragraphs(lines)
+        paras = fix_condition_labels(to_paragraphs(lines))
         if self.spacer is not None:
             from spacing import respace_paragraph
             paras = [respace_paragraph(self.spacer, p) for p in paras]
         return paras
+
+
+_LABELS = ["(가)", "(나)", "(다)", "(라)", "(마)"]
+_LABEL_HEAD = re.compile(r"^\s*\(\s*([^()\s]{1,3})\s*\)\s*")
+
+
+def fix_condition_labels(paras):
+    """조건 (가)(나)(다) 줄머리: OCR 이 (나) 를 (4), (LH) 처럼 읽음. (가) 로 시작하는 문단이 있으면
+    그 뒤 줄머리를 차례대로 (나), (다)… 로 맞춘다."""
+    heads = [i for i, p in enumerate(paras) if p and p[0][0] == "text" and _LABEL_HEAD.match(p[0][1])]
+    start = next((i for i in heads if _LABEL_HEAD.match(paras[i][0][1]).group(1) == "가"), None)
+    if start is None:
+        return paras
+    k = 0
+    for i in heads:
+        if i < start:
+            continue
+        if k >= len(_LABELS):
+            break
+        m = _LABEL_HEAD.match(paras[i][0][1])
+        if m.group(0).strip() != _LABELS[k]:
+            if re.fullmatch(r"\d|[A-Za-z]{1,3}|[가-힣]", m.group(1)) is None:
+                continue
+            paras[i] = [("text", _LABELS[k] + " " + paras[i][0][1][m.end():])] + paras[i][1:]
+        k += 1
+    return paras
 
 
 # ------------------------------------------------------------ 줄 묶기, 문단 만들기
