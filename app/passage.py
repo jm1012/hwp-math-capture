@@ -29,6 +29,45 @@ def _inter(a, b):
     return max(0, min(a[2], b[2]) - max(a[0], b[0])) * max(0, min(a[3], b[3]) - max(a[1], b[1]))
 
 
+CHOICE_MARKS = "①②③④⑤"
+
+
+def _ink_box(gray, b, th=160, pad=2):
+    """박스를 실제 글자(검은 점)가 있는 곳까지 줄인다. 비어 있으면 None"""
+    x0, y0, x1, y1 = (int(round(v)) for v in b)
+    a = gray[max(0, y0):y1, max(0, x0):x1] < th
+    ys, xs = np.nonzero(a)
+    if len(xs) < 6:
+        return None
+    return [max(0, x0) + xs.min() - pad, max(0, y0) + ys.min() - pad, max(0, x0) + xs.max() + pad + 1,
+            max(0, y0) + ys.max() + pad + 1]
+
+
+def _cut_marks(b, marks):
+    """수식 박스가 보기 번호 동그라미를 품고 있으면 동그라미 자리에서 잘라 여러 박스로 나눈다.
+    (보기 줄 전체, 또는 두 줄짜리 보기를 수식 하나로 잡은 경우). 결과: 박스 목록"""
+    inside = [m["box"] for m in marks if _inter(b, m["box"]) > 0.5 * _area(m["box"])]
+    if not inside:
+        return [list(b)]
+    rows = []  # 동그라미를 줄별로 묶음
+    for mb in sorted(inside, key=lambda m: (m[1] + m[3]) / 2):
+        cy, h = (mb[1] + mb[3]) / 2, mb[3] - mb[1]
+        if rows and abs(cy - rows[-1]["cy"]) < 0.5 * h:
+            rows[-1]["ms"].append(mb)
+        else:
+            rows.append({"cy": cy, "h": h, "ms": [mb]})
+    out = []
+    for i, r in enumerate(rows):
+        y0 = b[1] if i == 0 else (rows[i - 1]["cy"] + r["cy"]) / 2
+        y1 = b[3] if i == len(rows) - 1 else (r["cy"] + rows[i + 1]["cy"]) / 2
+        x = b[0]
+        for mb in sorted(r["ms"]) + [[b[2], 0, b[2], 0]]:
+            if mb[0] - x > 4:
+                out.append([x, y0, mb[0], y1])
+            x = max(x, mb[2])
+    return out
+
+
 class PassageReader:
     def __init__(self, mfd, mfr, ocr_det: str, ocr_rec: str, ocr_dict: str, scale_to: int = 1000):
         from rapidocr import RapidOCR
@@ -140,12 +179,26 @@ class PassageReader:
 
         # 원문자(㉠, ㉮)와 네모 칸 (가): 찾아서 기록하고 가림
         mark_items = self._marks(img, lh)
+        # 보기 번호 ①~⑤ 는 수식 검출 그림에서는 남겨 둔다: 지우면 빈칸으로 띄엄띄엄 늘어선 보기 줄 전체를
+        # 수식 검출이 표(array) 하나로 잡아 버림. 글자 OCR 그림에서만 가린다.
+        choice_items = [it for it in mark_items if it["val"] in CHOICE_MARKS]
         if mark_items:
             img = img.copy(); d = ImageDraw.Draw(img)
             for it in mark_items:
-                d.rectangle(it["box"], fill="white")
+                if it["val"] not in CHOICE_MARKS:
+                    d.rectangle(it["box"], fill="white")
             ws = [w for w in ws if not any(_inter(w["box"], it["box"]) > 0.5 * _area(w["box"]) for it in mark_items)]
         fboxes = self._formulas(img)
+        if choice_items:
+            gray = np.asarray(img.convert("L"))
+            cut = []
+            for b in fboxes:
+                parts = _cut_marks(b, choice_items)
+                if len(parts) == 1 and parts[0] == list(b):  # 동그라미를 품지 않은 박스는 그대로 (여백도 그대로)
+                    cut.append(b)
+                else:
+                    cut += [t for t in (_ink_box(gray, p) for p in parts) if t]
+            fboxes = cut
 
         boxes = []
         for b in fboxes:
@@ -164,7 +217,7 @@ class PassageReader:
         t1 = time.time()
 
         masked = img.copy(); d = ImageDraw.Draw(masked)
-        for b in boxes:
+        for b in boxes + [it["box"] for it in choice_items]:
             d.rectangle(b, fill="white")
         items = [{"box": w["box"], "kind": "text", "val": w["val"]} for w in self._words(masked, text_pass=True)] + mark_items
         t2 = time.time()
@@ -207,7 +260,7 @@ def merge_lines(items):
         segs, prev = [], None
         for it in its:
             gap = it["box"][0] - prev["box"][2] if prev is not None else 0
-            if prev is not None and (gap > 0.25 * h or (
+            if prev is not None and (gap > 0.25 * h or prev["val"] in CHOICE_MARKS or (
                     # 한글 바로 뒤에 오는 수식 앞은 띄움 (OCR 이 놓치는 경우가 많음): "곡선 y=…", "점 A를"
                     it["kind"] == "math" and prev["kind"] == "text" and HANGUL_RUN.search(prev["val"][-1:]))):
                 segs.append(("text", " "))

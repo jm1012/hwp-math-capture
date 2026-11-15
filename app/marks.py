@@ -101,7 +101,9 @@ def find_circles(g, lh):
         # 중심과 반지름을 1px 단위로 맞춤 (둘레가 가장 잘 겹치는 곳)
         on, rr, x, y = max((_ring(g, x + dx, y + dy, k), k, x + dx, y + dy)
                            for k in range(r - 3, r + 4) for dx in (-1, 0, 1) for dy in (-1, 0, 1))
-        if on < 0.85 or _ring(g, x, y, rr + 4) > 0.25:
+        if on < 0.85 or _ring(g, x, y, rr + 4) > 0.4 or rr > 0.48 * lh:
+            continue
+        if not _isolated(g, x, y, rr):  # 굵은 숫자 "5." 의 둥근 아랫부분처럼 바깥 획과 이어진 동그라미
             continue
         m = rr + 1
         crop = g[max(0, y - m):y + m + 1, max(0, x - m):x + m + 1]
@@ -111,9 +113,34 @@ def find_circles(g, lh):
         if v is None:
             continue
         score, ch = max((float(v @ t), ch) for ch, t in T)
-        if score > 0.4 and ch in CIRCLED:
+        if (ch in CIRCLED and score > 0.4) or (ch in CHOICES and score > 0.5):
             out.append(([int(x - m - 2), int(y - m - 2), int(x + m + 2), int(y + m + 2)], ch))
     return out
+
+
+CHOICES = DIGITS[:5]  # 보기 번호 ①~⑤: OCR 이 3, 4 로 읽거나 통째로 놓치는 일이 많아 모양으로 직접 찾음
+
+
+def _isolated(g, x, y, r, th=200):
+    """동그라미 둘레의 검은 획이 동그라미 밖으로 뻗어 나가지 않는지 (원문자는 둘레가 따로 떨어진 한 덩어리)"""
+    import cv2
+    m = 2 * r + 4
+    y0, x0 = max(0, y - m), max(0, x - m)
+    win = (g[y0:y + m + 1, x0:x + m + 1] < th).astype(np.uint8)
+    n, lab, stats, _ = cv2.connectedComponentsWithStats(win, connectivity=8)
+    t = np.linspace(0, 2 * np.pi, 72, endpoint=False)
+    xs = np.clip((x - x0 + r * np.cos(t)).round().astype(int), 0, win.shape[1] - 1)
+    ys = np.clip((y - y0 + r * np.sin(t)).round().astype(int), 0, win.shape[0] - 1)
+    ids = set()
+    for a, b in zip(xs, ys):
+        patch = lab[max(0, b - 1):b + 2, max(0, a - 1):a + 2]
+        ids.update(int(v) for v in patch.ravel() if v)
+    lim = r + 2 + 0.15 * r
+    for i in ids:
+        bx, by, bw, bh, _ = stats[i]
+        if (x - x0 - bx > lim or bx + bw - (x - x0) > lim or y - y0 - by > lim or by + bh - (y - y0) > lim):
+            return False
+    return True
 
 
 def find_boxes(g, lh, rec):
