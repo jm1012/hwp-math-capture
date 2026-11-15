@@ -36,7 +36,9 @@ class PassageReader:
         self.mfd, self.mfr, self.scale_to = mfd, mfr, scale_to
         self.ocr = RapidOCR(params={
             "Global.use_cls": False, "Global.log_level": "error",
-            "Det.model_path": ocr_det, "Rec.model_path": ocr_rec, "Rec.rec_keys_path": ocr_dict})
+            "Det.model_path": ocr_det, "Rec.model_path": ocr_rec, "Rec.rec_keys_path": ocr_dict,
+            # 기본값(min 736)은 이미 키운 그림을 짧은 변 기준으로 또 키워 가로 3000px 넘게 검출함 → 느리고 덜 정확
+            "Det.limit_type": "max", "Det.limit_side_len": 960})
         self._TextRecInput = TextRecInput
         try:
             from spacing import Spacer
