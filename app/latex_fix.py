@@ -27,6 +27,9 @@ def clean_latex(s: str) -> str:
     # 글자 크기 명령과 그 뒤 공백 제거: \mathrm { \scriptsize ~ A } -> \mathrm { A }
     s = re.sub(r"\\(?:scriptscriptstyle|tiny|scriptsize|footnotesize|small|normalsize|large|Large|LARGE|huge|Huge)"
                r"(?![A-Za-z])(?:\s|~|\\[,;:! ])*", "", s)
+    # { a _ { n } } ^ { 2 } -> a _ { n } ^ { 2 }: 한글은 중괄호로 묶은 아래첨자 뒤의 위첨자를 잘못 묶어
+    # 루트 안이 a^2_{+n-a_n} 처럼 깨짐 (2025 미적 25)
+    s = re.sub(r"(?<![_^])(?<![_^]\s)\{\s*([A-Za-z]|\\[A-Za-z]+)\s*_\s*\{([^{}]*)\}\s*\}(?=\s*\^)", r"\1 _ {\2}", s)
     # 빈 첨자: a _ { n } ^ { } -> a _ { n } (한글에서 빈 칸 첨자가 생김)
     s = re.sub(r"\s*[\^_]\s*\{\s*\}", "", s)
     # 글꼴 묶음 맨 앞의 공백: \mathrm { ~ A } -> \mathrm { A }
@@ -54,6 +57,37 @@ def fix_choices(segs):
                 new.append(w)
         out.append((kind, "".join(new)))
     return out
+
+def unify_choices(segs):
+    """보기 줄(①~⑤ 가 2개 이상)의 숫자 값을 모두 수식으로: '① 12 ② $14$' -> '① $12$ ② $14$'
+    (어떤 값은 글자, 어떤 값은 수식으로 섞여 나오던 것을 통일)"""
+    text = "".join(v for k, v in segs if k == "text")
+    if sum(c in text for c in CIRC) < 2:
+        return segs
+    out = []
+    for kind, val in segs:
+        if kind != "text":
+            out.append((kind, val)); continue
+        pos = 0
+        for m in re.finditer(r"(?<=[①②③④⑤])(\s*)(-?\d+(?:\.\d+)?)(?=\s|$|[①②③④⑤])", val):
+            out.append(("text", val[pos:m.start(2)]))
+            out.append(("math", m.group(2)))
+            pos = m.end(2)
+        out.append(("text", val[pos:]))
+    return [s for s in out if s[1] != ""]
+
+
+# 수식 바로 뒤에 붙은 'O' 는 대개 조사 '이' 를 OCR 이 잘못 읽은 것: "{b_n}O 모든" -> "{b_n}이 모든"
+# (원점 O 처럼 진짜 O 는 앞에 띄어쓰기가 있거나 뒤에 는/를/와/가/의 가 붙음)
+def o_after_math(segs):
+    out = list(segs)
+    for i in range(1, len(out)):
+        k, v = out[i]
+        if k == "text" and out[i - 1][0] == "math" and re.match(r"O(?=\s|$|[가-힣])(?![는를와가의])", v):
+            nxt_math = i + 1 < len(out) and out[i + 1][0] == "math"
+            out[i] = ("text", "이" + (v[1:] if v[1:] or not nxt_math else " "))
+    return out
+
 
 # 숫자 0 과 알파벳 O 구분: 0(영) 뒤에는 은/을/과/이, O(오) 뒤에는 는/를/와/가 가 붙는다
 _ZERO_AS_O = re.compile(r"(?<![0-9A-Za-z.])0(?=\s?[는를와가](?![가-힣]*\d))")

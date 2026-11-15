@@ -16,7 +16,8 @@ import time
 import numpy as np
 from PIL import Image, ImageDraw
 
-from latex_fix import clean_latex, fix_choices, single_letters, split_i, split_tail, zero_to_o
+from latex_fix import (clean_latex, fix_choices, o_after_math, single_letters, split_i, split_tail, unify_choices,
+                       zero_to_o)
 
 _TAIL_O = re.compile(r"^(.*\S)\s+(?:O|o|\\mathrm\s*\{\s*O\s*\}|\\circ)\s*$", re.S)
 
@@ -288,7 +289,7 @@ class PassageReader:
                 items.append({"box": [b[0] + 0.01 * i, b[1], b[2], b[3]], "kind": k, "val": v})
         self.timing = (t1 - t0, t2 - t1, time.time() - t2)
 
-        lines = [single_letters(zero_to_o(fix_choices(segs))) for segs in merge_lines(items)]
+        lines = [unify_choices(single_letters(o_after_math(zero_to_o(fix_choices(segs))))) for segs in merge_lines(items)]
         paras = fix_condition_labels(to_paragraphs(lines))
         if self.spacer is not None:
             from spacing import respace_paragraph
