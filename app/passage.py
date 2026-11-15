@@ -34,11 +34,12 @@ class PassageReader:
         from rapidocr import RapidOCR
         from rapidocr.ch_ppocr_rec import TextRecInput
         self.mfd, self.mfr, self.scale_to = mfd, mfr, scale_to
-        self.ocr = RapidOCR(params={
-            "Global.use_cls": False, "Global.log_level": "error",
-            "Det.model_path": ocr_det, "Rec.model_path": ocr_rec, "Rec.rec_keys_path": ocr_dict,
-            # 기본값(min 736)은 이미 키운 그림을 짧은 변 기준으로 또 키워 가로 3000px 넘게 검출함 → 느리고 덜 정확
-            "Det.limit_type": "max", "Det.limit_side_len": 960})
+        base = {"Global.use_cls": False, "Global.log_level": "error",
+                "Det.model_path": ocr_det, "Rec.model_path": ocr_rec, "Rec.rec_keys_path": ocr_dict}
+        # 첫 번째 OCR (수식 박스 속 한글 위치 찾기): 기본값(짧은 변 736 이상으로 키움). 크게 볼수록 수식 박스를 정확히 자름
+        self.ocr = RapidOCR(params=base)
+        # 두 번째 OCR (수식을 가린 그림의 글자): 긴 변 960. 기본값은 가로 3000px 넘게 키워 느리고 한글도 더 틀림
+        self.ocr_text = RapidOCR(params={**base, "Det.limit_type": "max", "Det.limit_side_len": 960})
         self._TextRecInput = TextRecInput
         try:
             from spacing import Spacer
@@ -48,8 +49,8 @@ class PassageReader:
         self.timing = (0.0, 0.0, 0.0)
 
     # ------------------------------------------------------------ 부품
-    def _words(self, img):
-        r = self.ocr(np.asarray(img)[:, :, ::-1], return_word_box=True)
+    def _words(self, img, text_pass=False):
+        r = (self.ocr_text if text_pass else self.ocr)(np.asarray(img)[:, :, ::-1], return_word_box=True)
         out = []
         for line in (r.word_results or []):
             for txt, _sc, box in line:
@@ -165,7 +166,7 @@ class PassageReader:
         masked = img.copy(); d = ImageDraw.Draw(masked)
         for b in boxes:
             d.rectangle(b, fill="white")
-        items = [{"box": w["box"], "kind": "text", "val": w["val"]} for w in self._words(masked)] + mark_items
+        items = [{"box": w["box"], "kind": "text", "val": w["val"]} for w in self._words(masked, text_pass=True)] + mark_items
         t2 = time.time()
         crops = [img.crop(tuple(int(v) for v in b)) for b in boxes]
         for b, latex in zip(boxes, self.mfr(crops) if crops else []):
