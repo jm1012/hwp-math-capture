@@ -80,13 +80,17 @@ def fix_formula_marks(reader, img: Image.Image, latex: str) -> tuple[str, str]:
     if boxes and _BOX.search(latex):
         latex = _replace_boxes(latex, [b["val"] for b in boxes])
 
-    tail = ""
+    return split_circle_tail(latex, np.asarray(img.convert("L")), lh, circles[-1]["val"] if circles else None)
+
+
+def split_circle_tail(latex: str, gray: np.ndarray, lh: float, known: str | None = None) -> tuple[str, str]:
+    """수식 끝의 '점선 + 동그라미 기호' → 동그라미 기호를 떼어 원문자 글자로.
+    점선(CDOTS)은 수식에 남긴다 (한글 문제에서도 점선은 수식 안에 씀). 결과 (LaTeX, 붙일 글자)"""
     latex = _TRAIL_SPACE.sub("", re.sub(r"\\$", "", latex.rstrip()))
     m = _TAIL.search(latex)
-    if m and (m.group("dots") or circles):
-        ch = circles[-1]["val"] if circles else _last_circle(np.asarray(img.convert("L")), lh)
-        if ch:
-            tail = (" ……" if m.group("dots") else "") + " " + ch
-            latex = latex[:m.start()]
-    latex = _TRAIL_SPACE.sub("", latex).strip()
-    return latex, tail
+    if not m or not (m.group("dots") or known):
+        return latex, ""
+    ch = known or _last_circle(gray, lh)
+    if not ch:
+        return latex, ""
+    return _TRAIL_SPACE.sub("", latex[:m.start("junk")]).strip(), " " + ch

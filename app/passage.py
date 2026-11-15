@@ -105,8 +105,13 @@ class PassageReader:
         r = (self.ocr_text if text_pass else self.ocr)(np.asarray(img)[:, :, ::-1], return_word_box=True)
         out = []
         for line in (r.word_results or []):
+            # 보통 줄 = [(글자, 점수, 네 꼭짓점), …]. 가끔 빈 항목이나, 단어 하나짜리 줄이 (글자, 점수, 꼭짓점)
+            # 그대로 나옴 (예전엔 여기서 오류가 나 인식이 멈춤)
+            if isinstance(line, (tuple, list)) and len(line) == 3 and isinstance(line[0], str):
+                line = [line]
             for item in line:
-                if len(item) != 3 or not item[2]:  # 글자를 못 읽은 줄은 빈 항목이 섞여 나옴 (예전엔 여기서 멈춤)
+                if not isinstance(item, (tuple, list)) or len(item) != 3 or not isinstance(item[0], str) \
+                        or item[2] is None or len(item[2]) == 0:
                     continue
                 txt, _sc, box = item
                 xs = [p[0] for p in box]; ys = [p[1] for p in box]
@@ -220,11 +225,14 @@ class PassageReader:
                     d.rectangle(it["box"], fill="white")
             ws = [w for w in ws if not any(_inter(w["box"], it["box"]) > 0.5 * _area(w["box"]) for it in mark_items)]
         fboxes = self._formulas(img)
-        if choice_items:
+        if mark_items:
+            # 수식 박스가 네모 칸 (가)·원문자를 품으면 그 자리에서 나눔. 안 나누면 "3 × [빈칸] ……" 이 수식 하나가 되고
+            # 네모 칸이 그 뒤에 붙어 순서가 바뀜. 여러 줄 수식(cases 등)은 보기 번호만 나눔
             gray = np.asarray(img.convert("L"))
             cut = []
             for b in fboxes:
-                parts = _cut_marks(b, choice_items)
+                marks_in = mark_items if b[3] - b[1] <= 2.2 * lh else choice_items
+                parts = _cut_marks(b, marks_in)
                 if len(parts) == 1 and parts[0] == list(b):  # 동그라미를 품지 않은 박스는 그대로 (여백도 그대로)
                     cut.append(b)
                 else:
@@ -253,8 +261,18 @@ class PassageReader:
         items = [{"box": w["box"], "kind": "text", "val": w["val"]} for w in self._words(masked, text_pass=True)] + mark_items
         t2 = time.time()
         crops = [img.crop(tuple(int(v) for v in b)) for b in boxes]
-        for b, latex in zip(boxes, self.mfr(crops) if crops else []):
+        from formula_marks import split_circle_tail
+        for b, crop, latex in zip(boxes, crops, self.mfr(crops) if crops else []):
             latex, tail = split_tail(clean_latex(latex))
+            if not tail:  # "…… ⊙": 점선 뒤 동그라미 기호는 원문자 (원문자 검출이 놓친 경우)
+                try:
+                    latex, tail = split_circle_tail(latex, np.asarray(crop.convert("L")), lh)
+                except Exception:  # noqa: BLE001
+                    pass
+            if not latex.strip():
+                if tail:
+                    items.append({"box": b, "kind": "text", "val": tail.strip()})
+                continue
             items.append({"box": b, "kind": "math", "val": latex})
             if tail:  # 수식 오른쪽 끝 바로 뒤에 글자로 둔다
                 items.append({"box": [b[0] + 0.01, b[1], b[2], b[3]], "kind": "text", "val": tail})
