@@ -74,14 +74,18 @@ ACCENTS = {"vec": "vec", "overrightarrow": "vec", "overleftrightarrow": "dyad",
            "bar": "bar", "overline": "bar", "hat": "hat", "widehat": "hat",
            "tilde": "tilde", "widetilde": "tilde", "dot": "dot", "ddot": "ddot",
            "acute": "acute", "grave": "grave", "check": "check", "breve": "arch",
-           "underline": "under", "boxed": "BOX"}
+           "underline": "under", "boxed": "BOX", "fbox": "BOX", "framebox": "BOX"}
 ENVS = {"matrix": "matrix", "pmatrix": "pmatrix", "bmatrix": "bmatrix",
         "vmatrix": "dmatrix", "Vmatrix": "dmatrix", "smallmatrix": "matrix",
         "cases": "cases", "aligned": "eqalign", "align": "eqalign", "align*": "eqalign",
         "gathered": "eqalign", "split": "eqalign", "array": "matrix", "eqnarray": "eqalign"}
 DROP = {"displaystyle", "textstyle", "scriptstyle", "limits", "nolimits", "left.",
         "right.", "big", "Big", "bigg", "Bigg", "bigl", "bigr", "Bigl", "Bigr",
-        "biggl", "biggr", "Biggl", "Biggr", "nonumber", "notag", "mathstrut", "strut"}
+        "biggl", "biggr", "Biggl", "Biggr", "nonumber", "notag", "mathstrut", "strut",
+        "allowbreak", "nobreak", "relax", "mathop",
+        # 글자 크기 명령: 한글 수식에 없는 문법이고, 인식기가 작은 글씨(점 이름 등)에 붙여 내는 것이라 버림
+        "scriptscriptstyle", "tiny", "scriptsize", "footnotesize", "small", "normalsize", "large", "Large",
+        "LARGE", "huge", "Huge"}
 FONT_CMDS = {"mathrm": "rm", "textrm": "rm", "mathit": "it", "mathbf": "bold",
              "textbf": "bold", "boldsymbol": "bold", "bm": "bold", "mathbb": "",
              "mathcal": "", "mathscr": "", "mathfrak": "", "mathsf": "rm", "mathtt": "rm"}

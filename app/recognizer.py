@@ -62,8 +62,25 @@ class Recognizer:
         with self._lock:
             return clean_latex(self.mfr([self._prepare(img)])[0])
 
+    def recognize_full(self, img: Image.Image) -> tuple[str, str]:
+        """수식 한 개 → (LaTeX, 뒤에 글자로 붙일 것).
+        수식 인식기는 네모 칸 (가) 를 \\fbox{(7♯)} 로, 점선 뒤 원문자 ㉠ 을 \\odot 로 읽으므로
+        그림에서 네모 칸·원문자를 따로 찾아 바꿔 넣는다. 원문자는 "…… ㉠" 글자로 수식 뒤에 붙인다."""
+        from latex_fix import clean_latex
+        self._wait()
+        with self._lock:
+            p = self._prepare(img)
+            latex = clean_latex(self.mfr([p])[0])
+            try:
+                return fix_formula_marks(self.passage, p, latex)
+            except Exception:  # noqa: BLE001  못 찾으면 인식기 결과 그대로
+                return latex, ""
+
     def read_passage(self, img: Image.Image) -> list[list[tuple[str, str]]]:
         """글자+수식 지문 → 문단 목록 [[("text", …), ("math", LaTeX), …], …]"""
         self._wait()
         with self._lock:
             return self.passage(self._prepare(img))
+
+
+from formula_marks import fix_formula_marks  # noqa: E402

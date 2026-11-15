@@ -16,7 +16,10 @@ import time
 import numpy as np
 from PIL import Image, ImageDraw
 
-from latex_fix import clean_latex, fix_choices, single_letters, split_tail, zero_to_o
+from latex_fix import (clean_latex, fix_choices, o_after_math, single_letters, split_i, split_tail, unify_choices,
+                       zero_to_o)
+
+_TAIL_O = re.compile(r"^(.*\S)\s+(?:O|o|\\mathrm\s*\{\s*O\s*\}|\\circ)\s*$", re.S)
 
 HANGUL_RUN = re.compile(r"[가-힣ㄱ-ㅎ]+")
 
@@ -27,6 +30,58 @@ def _area(b):
 
 def _inter(a, b):
     return max(0, min(a[2], b[2]) - max(a[0], b[0])) * max(0, min(a[3], b[3]) - max(a[1], b[1]))
+
+
+CHOICE_MARKS = "①②③④⑤"
+JAMO_HEAD = re.compile(r"^[7ㄱ¬LㄴlICcEㄷㄹ=]\s*[.,·]")
+
+
+def _leftmost(w, ws):
+    """같은 줄에서 가장 왼쪽 단어인지"""
+    y0, y1 = w["box"][1], w["box"][3]
+    for o in ws:
+        if o is w or o["box"][0] >= w["box"][0]:
+            continue
+        ov = min(y1, o["box"][3]) - max(y0, o["box"][1])
+        if ov > 0.5 * min(y1 - y0, o["box"][3] - o["box"][1]):
+            return False
+    return True
+
+
+def _ink_box(gray, b, th=160, pad=2):
+    """박스를 실제 글자(검은 점)가 있는 곳까지 줄인다. 비어 있으면 None"""
+    x0, y0, x1, y1 = (int(round(v)) for v in b)
+    a = gray[max(0, y0):y1, max(0, x0):x1] < th
+    ys, xs = np.nonzero(a)
+    if len(xs) < 6:
+        return None
+    return [max(0, x0) + xs.min() - pad, max(0, y0) + ys.min() - pad, max(0, x0) + xs.max() + pad + 1,
+            max(0, y0) + ys.max() + pad + 1]
+
+
+def _cut_marks(b, marks):
+    """수식 박스가 보기 번호 동그라미를 품고 있으면 동그라미 자리에서 잘라 여러 박스로 나눈다.
+    (보기 줄 전체, 또는 두 줄짜리 보기를 수식 하나로 잡은 경우). 결과: 박스 목록"""
+    inside = [m["box"] for m in marks if _inter(b, m["box"]) > 0.5 * _area(m["box"])]
+    if not inside:
+        return [list(b)]
+    rows = []  # 동그라미를 줄별로 묶음
+    for mb in sorted(inside, key=lambda m: (m[1] + m[3]) / 2):
+        cy, h = (mb[1] + mb[3]) / 2, mb[3] - mb[1]
+        if rows and abs(cy - rows[-1]["cy"]) < 0.5 * h:
+            rows[-1]["ms"].append(mb)
+        else:
+            rows.append({"cy": cy, "h": h, "ms": [mb]})
+    out = []
+    for i, r in enumerate(rows):
+        y0 = b[1] if i == 0 else (rows[i - 1]["cy"] + r["cy"]) / 2
+        y1 = b[3] if i == len(rows) - 1 else (r["cy"] + rows[i + 1]["cy"]) / 2
+        x = b[0]
+        for mb in sorted(r["ms"]) + [[b[2], 0, b[2], 0]]:
+            if mb[0] - x > 4:
+                out.append([x, y0, mb[0], y1])
+            x = max(x, mb[2])
+    return out
 
 
 class PassageReader:
@@ -53,7 +108,15 @@ class PassageReader:
         r = (self.ocr_text if text_pass else self.ocr)(np.asarray(img)[:, :, ::-1], return_word_box=True)
         out = []
         for line in (r.word_results or []):
-            for txt, _sc, box in line:
+            # 보통 줄 = [(글자, 점수, 네 꼭짓점), …]. 가끔 빈 항목이나, 단어 하나짜리 줄이 (글자, 점수, 꼭짓점)
+            # 그대로 나옴 (예전엔 여기서 오류가 나 인식이 멈춤)
+            if isinstance(line, (tuple, list)) and len(line) == 3 and isinstance(line[0], str):
+                line = [line]
+            for item in line:
+                if not isinstance(item, (tuple, list)) or len(item) != 3 or not isinstance(item[0], str) \
+                        or item[2] is None or len(item[2]) == 0:
+                    continue
+                txt, _sc, box = item
                 xs = [p[0] for p in box]; ys = [p[1] for p in box]
                 out.append({"box": [min(xs), min(ys), max(xs), max(ys)], "val": txt})
         return out
@@ -112,7 +175,7 @@ class PassageReader:
                     break
         return b
 
-    def _marks(self, img, lh):
+    def _marks(self, img, lh, ws=()):
         import marks
         g = np.asarray(img.convert("L"))
         rec = lambda b: self._rec_one(img, b)  # noqa: E731
@@ -122,6 +185,21 @@ class PassageReader:
                       for b, ch in marks.find_boxes(g, lh, rec)]
         except Exception:  # noqa: BLE001  찾지 못해도 나머지는 진행
             return []
+        # <보기> 문제: 보기 ①~⑤ 의 값(ㄱ, ㄴ, ㄷ)을 모양으로 읽음
+        ch = [(it["box"], it["val"]) for it in items if it["val"] in CHOICE_MARKS]
+        if re.search(r"보\s*기", "".join(w["val"] for w in ws)):
+            try:
+                if ch:
+                    items += [{"box": b, "kind": "text", "val": v} for b, v in marks.read_jamo_choices(g, ch, lh)]
+                top = min(o["box"][1] for o in ws)
+                for w in ws:  # 보기 안의 줄머리 ㄱ. ㄴ. ㄷ. (첫 줄의 문제 번호 '7.' 은 제외)
+                    if not JAMO_HEAD.match(w["val"]) or not _leftmost(w, ws) or w["box"][1] < top + 0.5 * lh:
+                        continue
+                    r = marks.read_jamo_label(g, w["box"], lh)
+                    if r:
+                        items.append({"box": r[0], "kind": "text", "val": r[1]})
+            except Exception:  # noqa: BLE001
+                pass
         return items
 
     # ------------------------------------------------------------ 전체
@@ -139,13 +217,30 @@ class PassageReader:
         cw = cws[len(cws) // 2] if cws else 0.75 * lh
 
         # 원문자(㉠, ㉮)와 네모 칸 (가): 찾아서 기록하고 가림
-        mark_items = self._marks(img, lh)
+        mark_items = self._marks(img, lh, ws)
+        # 보기 번호 ①~⑤ 는 수식 검출 그림에서는 남겨 둔다: 지우면 빈칸으로 띄엄띄엄 늘어선 보기 줄 전체를
+        # 수식 검출이 표(array) 하나로 잡아 버림. 글자 OCR 그림에서만 가린다.
+        choice_items = [it for it in mark_items if it["val"] in CHOICE_MARKS]
         if mark_items:
             img = img.copy(); d = ImageDraw.Draw(img)
             for it in mark_items:
-                d.rectangle(it["box"], fill="white")
+                if it["val"] not in CHOICE_MARKS:
+                    d.rectangle(it["box"], fill="white")
             ws = [w for w in ws if not any(_inter(w["box"], it["box"]) > 0.5 * _area(w["box"]) for it in mark_items)]
         fboxes = self._formulas(img)
+        if mark_items:
+            # 수식 박스가 네모 칸 (가)·원문자를 품으면 그 자리에서 나눔. 안 나누면 "3 × [빈칸] ……" 이 수식 하나가 되고
+            # 네모 칸이 그 뒤에 붙어 순서가 바뀜. 여러 줄 수식(cases 등)은 보기 번호만 나눔
+            gray = np.asarray(img.convert("L"))
+            cut = []
+            for b in fboxes:
+                marks_in = mark_items if b[3] - b[1] <= 2.2 * lh else choice_items
+                parts = _cut_marks(b, marks_in)
+                if len(parts) == 1 and parts[0] == list(b):  # 동그라미를 품지 않은 박스는 그대로 (여백도 그대로)
+                    cut.append(b)
+                else:
+                    cut += [t for t in (_ink_box(gray, p) for p in parts) if t]
+            fboxes = cut
 
         boxes = []
         for b in fboxes:
@@ -164,24 +259,68 @@ class PassageReader:
         t1 = time.time()
 
         masked = img.copy(); d = ImageDraw.Draw(masked)
-        for b in boxes:
+        for b in boxes + [it["box"] for it in choice_items]:
             d.rectangle(b, fill="white")
         items = [{"box": w["box"], "kind": "text", "val": w["val"]} for w in self._words(masked, text_pass=True)] + mark_items
         t2 = time.time()
         crops = [img.crop(tuple(int(v) for v in b)) for b in boxes]
-        for b, latex in zip(boxes, self.mfr(crops) if crops else []):
+        from formula_marks import split_circle_tail
+        for b, crop, latex in zip(boxes, crops, self.mfr(crops) if crops else []):
             latex, tail = split_tail(clean_latex(latex))
-            items.append({"box": b, "kind": "math", "val": latex})
-            if tail:  # 수식 오른쪽 끝 바로 뒤에 글자로 둔다
-                items.append({"box": [b[0] + 0.01, b[1], b[2], b[3]], "kind": "text", "val": tail})
+            if not tail:  # "…… ⊙": 점선 뒤 동그라미 기호는 원문자 (원문자 검출이 놓친 경우)
+                try:
+                    latex, tail = split_circle_tail(latex, np.asarray(crop.convert("L")), lh)
+                except Exception:  # noqa: BLE001
+                    pass
+            if not tail:  # 수식 끝의 " O" 는 '이/인' 인 경우가 많음: 끝부분을 글자 OCR 로 다시 읽어 봄
+                mo = _TAIL_O.match(latex)
+                if mo:
+                    t, sc = self._rec_one(img, [max(b[0], b[2] - 1.3 * cw), b[1], b[2], b[3]])
+                    if sc > 0.6 and t and HANGUL_RUN.fullmatch(t):
+                        latex, tail = mo.group(1), t
+            if tail and tail.strip() == "이":  # '이' 인지 '인' 인지 끝부분을 다시 읽어 봄
+                t, sc = self._rec_one(img, [max(b[0], b[2] - 1.3 * cw), b[1], b[2], b[3]])
+                if sc > 0.7 and t in ("인", "이고", "이며", "이다", "이면"):
+                    tail = t
+            segs = split_i(latex) if latex.strip() else []
+            if tail:
+                segs.append(("text", tail.strip() if not segs else tail))
+            for i, (k, v) in enumerate(segs):  # 수식 오른쪽 끝 바로 뒤에 글자로 둔다 (x 를 조금씩 밀어 순서 유지)
+                items.append({"box": [b[0] + 0.01 * i, b[1], b[2], b[3]], "kind": k, "val": v})
         self.timing = (t1 - t0, t2 - t1, time.time() - t2)
 
-        lines = [single_letters(zero_to_o(fix_choices(segs))) for segs in merge_lines(items)]
-        paras = to_paragraphs(lines)
+        lines = [unify_choices(single_letters(o_after_math(zero_to_o(fix_choices(segs))))) for segs in merge_lines(items)]
+        paras = fix_condition_labels(to_paragraphs(lines))
         if self.spacer is not None:
             from spacing import respace_paragraph
             paras = [respace_paragraph(self.spacer, p) for p in paras]
         return paras
+
+
+_LABELS = ["(가)", "(나)", "(다)", "(라)", "(마)"]
+_LABEL_HEAD = re.compile(r"^\s*\(\s*([^()\s]{1,3})\s*\)\s*")
+
+
+def fix_condition_labels(paras):
+    """조건 (가)(나)(다) 줄머리: OCR 이 (나) 를 (4), (LH) 처럼 읽음. (가) 로 시작하는 문단이 있으면
+    그 뒤 줄머리를 차례대로 (나), (다)… 로 맞춘다."""
+    heads = [i for i, p in enumerate(paras) if p and p[0][0] == "text" and _LABEL_HEAD.match(p[0][1])]
+    start = next((i for i in heads if _LABEL_HEAD.match(paras[i][0][1]).group(1) == "가"), None)
+    if start is None:
+        return paras
+    k = 0
+    for i in heads:
+        if i < start:
+            continue
+        if k >= len(_LABELS):
+            break
+        m = _LABEL_HEAD.match(paras[i][0][1])
+        if m.group(0).strip() != _LABELS[k]:
+            if re.fullmatch(r"\d|[A-Za-z]{1,3}|[가-힣]", m.group(1)) is None:
+                continue
+            paras[i] = [("text", _LABELS[k] + " " + paras[i][0][1][m.end():])] + paras[i][1:]
+        k += 1
+    return paras
 
 
 # ------------------------------------------------------------ 줄 묶기, 문단 만들기
@@ -207,7 +346,7 @@ def merge_lines(items):
         segs, prev = [], None
         for it in its:
             gap = it["box"][0] - prev["box"][2] if prev is not None else 0
-            if prev is not None and (gap > 0.25 * h or (
+            if prev is not None and (gap > 0.25 * h or prev["val"] in CHOICE_MARKS or (
                     # 한글 바로 뒤에 오는 수식 앞은 띄움 (OCR 이 놓치는 경우가 많음): "곡선 y=…", "점 A를"
                     it["kind"] == "math" and prev["kind"] == "text" and HANGUL_RUN.search(prev["val"][-1:]))):
                 segs.append(("text", " "))

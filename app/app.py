@@ -232,16 +232,21 @@ class App:
                                     ms=0, color="#d1242f")
                     self.open_hotkey_dialog(mode)
                 elif ev == "quit":
-                    if self.tray:
-                        self.tray.stop()
-                    for hk in self.hotkeys.values():
-                        hk.stop()
-                    self.root.destroy()
-                    return
+                    try:
+                        if self.tray:
+                            self.tray.stop()
+                        for hk in self.hotkeys.values():
+                            hk.stop()
+                        self.root.destroy()
+                    finally:
+                        os._exit(0)  # 인식 중인 작업 스레드가 남아 있어도 바로 끝냄
                 elif kind == "result":
                     self._show_result(*ev[1:])
         except queue.Empty:
             pass
+        except Exception:  # noqa: BLE001  한 번의 오류로 이벤트 처리가 멈추면 종료도 안 됨
+            traceback.print_exc()
+            self.busy = False
         self.root.after(80, self._poll)
 
     def _hk(self, mode="formula"):
@@ -304,13 +309,16 @@ class App:
         t0 = time.time()
         try:
             from latex2hwp import latex_to_hwp
-            from hwp_clipboard import set_equation_clipboard
-            latex = self.rec.recognize(img)
+            from hwp_clipboard import set_equation_clipboard, set_passage_clipboard
+            latex, tail = self.rec.recognize_full(img)
             script = latex_to_hwp(latex)
-            set_equation_clipboard(script, plain_text=latex)
+            if tail:  # 점선 뒤 원문자 "…… ㉠" 는 수식 뒤에 글자로
+                set_passage_clipboard([[("eq", script), ("text", tail)]], plain_text=f"${latex}${tail}")
+            else:
+                set_equation_clipboard(script, plain_text=latex)
             with open(LOG_PATH, "a", encoding="utf-8") as f:
-                f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}\t{latex}\t{script}\n")
-            self.events.put(("result", "ok", f"LaTeX: {latex}\n한글: {script}", time.time() - t0))
+                f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}\t{latex}{tail}\t{script}\n")
+            self.events.put(("result", "ok", f"LaTeX: {latex}{tail}\n한글: {script}{tail}", time.time() - t0))
         except Exception as e:  # noqa: BLE001
             traceback.print_exc()
             self.events.put(("result", "err", str(e), 0))
@@ -353,7 +361,7 @@ class App:
         if kind == "ok":
             self.toast.show(f"복사됨 ({dt:.1f}초) — 한글에서 Ctrl+V", body, ms=7000, color="#1a7f37")
         else:
-            self.toast.show("인식 실패", a, ms=8000, color="#d1242f")
+            self.toast.show("인식 실패", body, ms=8000, color="#d1242f")
 
     def run(self):
         self.root.mainloop()
