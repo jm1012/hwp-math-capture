@@ -155,24 +155,74 @@ class PassageReader:
                 L = len(v); out.append((x0 + (x1 - x0) * m.start() / L, x0 + (x1 - x0) * m.end() / L, y0, y1))
         return out
 
-    def _trim_edges(self, img, b, cw):
-        """수식 박스 끝에 한글 글자(의, 이, 인 …)가 붙어 있으면 잘라낸다."""
+    def _trim_edges(self, img, b, cw, sides=(1, -1)):
+        """수식 박스 끝에 한글 글자(의, 이, 인 …)가 붙어 있거나 걸쳐 있으면 잘라낸다.
+        박스 끝이 글자 중간에 걸친 경우를 위해 창을 조금씩 밖으로 밀어 가며 읽는다."""
         b = list(b)
         if b[3] - b[1] > 2.5 * cw:
             return b
-        for side in (1, -1):
+        g = getattr(self, "_gray", None)
+        W = img.width
+        for side in sides:
             for _ in range(2):
-                if b[2] - b[0] < 1.6 * cw:
+                if b[2] - b[0] < 1.0 * cw:
                     break
-                seg = [b[2] - 1.15 * cw, b[1], b[2], b[3]] if side == 1 else [b[0], b[1], b[0] + 1.15 * cw, b[3]]
-                t, sc = self._rec_one(img, seg)
-                if sc > 0.7 and t and HANGUL_RUN.fullmatch(t):
+                best = None
+                for d in (0.0, 0.2, 0.4, 0.6, 0.8):
                     if side == 1:
-                        b[2] -= cw
+                        x1 = min(W, b[2] + d * cw); seg = [x1 - 1.15 * cw, b[1], x1, b[3]]
                     else:
-                        b[0] += cw
-                else:
+                        x0 = max(0, b[0] - d * cw); seg = [x0, b[1], x0 + 1.15 * cw, b[3]]
+                    if d and g is not None:  # 밖으로 민 창: 박스 끝 바로 밖에 잉크가 이어져 있을 때만
+                        e = int(b[2] if side == 1 else b[0])
+                        band = g[int(b[1]):int(b[3]), max(0, e - 2):min(W, e + 3)] < 160
+                        if not band.any():
+                            break
+                    t, sc = self._rec_one(img, seg)
+                    if sc > (0.7 if d == 0 else 0.85) and t and HANGUL_RUN.fullmatch(t) and len(t) == 1:
+                        if best is None or sc > best[0]:
+                            best = (sc, seg, t)
+                if best is None:
                     break
+                seg = best[1]
+                if side == 1:
+                    b[2] = seg[2] - cw
+                    glyph = [b[2], b[1], seg[2], b[3]]
+                else:
+                    b[0] = seg[0] + cw
+                    glyph = [seg[0], b[1], b[0], b[3]]
+                self._trimmed.append((glyph, best[2]))
+        return b
+
+    def _trim_tall(self, img, b, cw, ws=()):
+        """키 큰 수식(시그마, 분수 등) 끝에 한글이 걸쳐 있으면, 그 글자 높이의 띠만 보고 끝을 자른다.
+        (_trim_edges 는 박스 전체 높이로 글자를 읽어서 키 큰 박스에서는 한글을 못 읽음)
+        띠 = 박스 끝 바로 바깥 한 글자 폭 안에서 잉크가 있는 줄 범위."""
+        if b[3] - b[1] <= 2.5 * cw:
+            return b
+        b = list(b); g = self._gray; H, W = g.shape
+        y0, y1 = max(0, int(b[1])), min(H, int(b[3]))
+        for side in (1, -1):
+            e = int(b[2] if side == 1 else b[0])
+            xa, xb = (e, min(W, int(e + 0.9 * cw))) if side == 1 else (max(0, int(e - 0.9 * cw)), e)
+            if xb - xa < 0.5 * cw:
+                continue
+            ys = np.nonzero((g[y0:y1, xa:xb] < 160).any(axis=1))[0]
+            if len(ys) == 0:
+                continue
+            # 가장 긴 이어진 줄 묶음 = 옆 글자
+            runs, s = [], ys[0]
+            for a, c in zip(ys, list(ys[1:]) + [None]):
+                if c is None or c - a > 3:
+                    runs.append((s, a)); s = c
+            r0, r1 = max(runs, key=lambda r: r[1] - r[0])
+            if not (0.6 * cw <= r1 - r0 + 1 <= 1.7 * cw):
+                continue
+            band = self._trim_edges(img, [b[0], y0 + r0 - 2, b[2], y0 + r1 + 3], cw, sides=(side,))
+            if side == 1:
+                b[2] = min(b[2], band[2])
+            else:
+                b[0] = max(b[0], band[0])
         return b
 
     def _marks(self, img, lh, ws=()):
@@ -254,14 +304,31 @@ class PassageReader:
                 if s0 - x > 0.3 * h:
                     boxes.append([x, b[1], s0, b[3]])
                 x = max(x, s1)
-        boxes = [self._trim_edges(img, b, cw) for b in boxes]
+        self._gray = np.asarray(img.convert("L"))
+        self._trimmed = []  # 수식 박스 끝에서 잘라 낸 한글 글자 (자리, 글자)
+        boxes = [self._trim_tall(img, self._trim_edges(img, b, cw), cw, ws) for b in boxes]
         boxes = [b for b in boxes if b[2] - b[0] > 4]
         t1 = time.time()
 
         masked = img.copy(); d = ImageDraw.Draw(masked)
         for b in boxes + [it["box"] for it in choice_items]:
             d.rectangle(b, fill="white")
-        items = [{"box": w["box"], "kind": "text", "val": w["val"]} for w in self._words(masked, text_pass=True)] + mark_items
+        items = [{"box": w["box"], "kind": "text", "val": w["val"]} for w in self._words(masked, text_pass=True)]
+        # 잘라 낸 글자가 혼자 떨어져 있으면(줄 끝의 '이' 등) 글자 검출이 놓치는 일이 있다: 그 자리를 덮는 글자가 없으면 넣어 줌
+        for g, ch in self._trimmed:
+            gw = g[2] - g[0]
+            def covers(it):
+                t = it["box"]
+                if min(t[3], g[3]) - max(t[1], g[1]) < 0.4 * min(t[3] - t[1], g[3] - g[1]):
+                    return False
+                if min(t[2], g[2]) - max(t[0], g[0]) > 0.3 * gw:
+                    return True
+                # 살짝 떨어져 있어도 같은 글자로 시작/끝나는 옆 글자 덩어리면 이미 읽힌 것
+                v = str(it["val"]).strip()
+                return bool(v) and ((v[0] == ch and 0 <= t[0] - g[0] < 1.2 * gw) or (v[-1] == ch and 0 <= g[2] - t[2] < 1.2 * gw))
+            if not any(covers(it) for it in items):
+                items.append({"box": g, "kind": "text", "val": ch})
+        items += mark_items
         t2 = time.time()
         crops = [img.crop(tuple(int(v) for v in b)) for b in boxes]
         from formula_marks import split_circle_tail

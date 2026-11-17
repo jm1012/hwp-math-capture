@@ -46,6 +46,9 @@ SYMBOLS = {
     "uparrow": "uparrow", "downarrow": "downarrow", "Uparrow": "UPARROW",
     "Downarrow": "DOWNARROW", "mapsto": "MAPSTO",
     "nearrow": "NEARROW", "searrow": "SEARROW", "nwarrow": "NWARROW", "swarrow": "SWARROW",
+    # 한글 수식에 없는 화살표: 유니코드 글자로
+    "rightharpoonup": "⇀", "rightharpoondown": "⇁", "leftharpoonup": "↼", "leftharpoondown": "↽",
+    "hookrightarrow": "↪", "hookleftarrow": "↩", "rightleftharpoons": "⇌",
     # 기타
     "infty": "INF", "partial": "partial", "nabla": "NABLA", "angle": "ANGLE",
     "measuredangle": "MSANGLE", "triangle": "TRIANGLE", "bigtriangleup": "TRIANGLE",
@@ -56,7 +59,20 @@ SYMBOLS = {
     "lfloor": "⌊", "rfloor": "⌋", "lceil": "⌈", "rceil": "⌉",
     "langle": "〈", "rangle": "〉", "vert": "|", "Vert": "∥", "lvert": "|", "rvert": "|",
     "lVert": "∥", "rVert": "∥", "backslash": "∖",
+    "lbrace": "lbrace", "rbrace": "rbrace", "colon": ":", "hdots": "LDOTS", "sharp": "♯", "flat": "♭", "natural": "♮",
+    "triangleleft": "◁", "triangleright": "▷", "bigtriangledown": "▽", "triangledown": "▽",
+    "boxplus": "⊞", "boxtimes": "⊠", "imath": "i", "jmath": "j",
 }
+# \stackrel / \overset 위에 얹힌 화살표 = 벡터 표시 (인식기가 \vec 대신 이렇게 내는 경우가 많음)
+VEC_TOPS = {"->", "⇀", "⇁", "RARROW", "vec"}
+# 인수와 함께 통째로 버리는 명령 (한글 수식에 뜻이 없거나, 인식기가 옆 글자를 잘못 읽어 낸 찌꺼기)
+DROP_WITH_ARG = {"phantom", "hphantom", "vphantom", "footnote", "footnotemark", "footnotetext", "ref", "eqref",
+                 "label", "tag", "cite", "vspace", "rule"}
+# LaTeX 표에 없지만 한글 수식이 같은 이름으로 알아듣는 것 (그대로 통과)
+PASS_THROUGH = {"over": "over", "atop": "atop", "it": "it", "rm": "rm", "bf": "bold", "choose": "atop"}
+CIRCLED = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳"
+# 변환 중 버린 모르는 명령 이름 (가장 최근 변환). 의심스러운 수식을 찾을 때 씀
+unknown_seen: list[str] = []
 # \{ 같은 한 글자 이스케이프
 ESCAPED = {"{": "lbrace", "}": "rbrace", "|": "∥", "%": "%", "$": "$", "#": "#",
            "&": "&", "_": "_"}
@@ -248,12 +264,27 @@ class Parser:
             return self.scripts(name[3:])
         if name.lower() in GREEK and name[0].isupper():
             return self.scripts(name.upper())
+        if name[:3] == "var" and name[3:].lower() in GREEK:  # \varPsi
+            return self.scripts(name[3:].upper())
         if name in ACCENTS:
             return self.scripts(f"{ACCENTS[name]} {{{self.arg()}}}")
+        if name in DROP_WITH_ARG:
+            if self.peek() == "[":
+                self.optional_arg()
+            if self.peek() == "{":
+                self.raw_group()
+            return ""
+        if name == "textcircled":
+            body = re.sub(r"\s", "", self.raw_group())
+            if body.isdigit() and 1 <= int(body) <= 20:
+                return self.scripts(CIRCLED[int(body) - 1])
+            return self.scripts(body)
         if name == "overset":
             top, base = self.arg(), self.arg()
             if top in ("frown", "⌢"):
                 return self.scripts(f"arch {{{base}}}")
+            if top.strip() in VEC_TOPS:
+                return self.scripts(f"vec {{{base}}}")
             return self.scripts(f"{{{base}}} ^{{{top}}}")
         if name == "underset":
             bot, base = self.arg(), self.arg()
@@ -263,6 +294,8 @@ class Parser:
             return self.scripts(f"{name.upper()} {{{body}}}")
         if name in ("stackrel",):
             top, base = self.arg(), self.arg()
+            if top.strip() in VEC_TOPS:
+                return self.scripts(f"vec {{{base}}}")
             return self.scripts(f"{{{base}}} ^{{{top}}}")
         if name in ("not",):
             nxt = self.peek()
@@ -288,8 +321,14 @@ class Parser:
             return "frown"
         if name in SYMBOLS:
             return self.scripts(SYMBOLS[name])
-        # 모르는 명령: 이름을 그대로 남긴다 (한글이 알아듣는 경우가 많음)
-        return self.scripts(name)
+        if name in PASS_THROUGH:
+            return self.scripts(PASS_THROUGH[name])
+        # 모르는 명령: 버린다. 이름을 남기면 "footnote", "rightharpoonup" 같은 글자가 수식에 그대로 찍힘
+        # (인식기가 수식 옆 한글 조각 등을 엉뚱한 명령으로 읽은 경우가 대부분). 한 글자 명령(\i, \l)은 글자로 둠
+        unknown_seen.append(name)
+        if len(name) == 1 and name.isalpha():
+            return self.scripts(name)
+        return self.scripts("")
 
     def delim(self, tok):
         if tok == ".":
@@ -346,7 +385,15 @@ def tidy(h: str) -> str:
 
 
 def latex_to_hwp(latex: str) -> str:
-    return tidy(Parser(tokenize(clean_latex(latex))).sequence())
+    unknown_seen.clear()
+    h = tidy(Parser(tokenize(clean_latex(latex))).sequence())
+    # 버린 명령 때문에 생긴 빈 첨자·빈 묶음 정리
+    for _ in range(3):
+        h2 = re.sub(r"\s*[\^_]\{\s*\}", "", h)
+        if h2 == h:
+            break
+        h = h2
+    return tidy(h)
 
 
 if __name__ == "__main__":
