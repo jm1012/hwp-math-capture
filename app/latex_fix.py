@@ -192,7 +192,7 @@ def normalize_p2t(s: str) -> str:
 
 
 # 수식 끝에 '이'가 기호처럼 잘못 붙어 나오는 흔한 모양 (o| , ∘[ , Φ| …)
-_TAIL_I = re.compile(r"\s*(?:\\circ|\\Phi|\\phi|o|0|\\diamond)\s*(?:\\!\s*)?(?:\^\s*\{[^{}]*\}\s*)?[\[\]|]\s*$")
+_TAIL_I = re.compile(r"\s*(?:\\circ|\\Phi|\\phi|o|0|\\diamond)\s*(?:\\!\s*)?(?:\^\s*\{[^{}]*\}\s*)?(?:[\[\]|]|\\rceil|\\rfloor)\s*$")
 
 
 def split_tail(latex: str) -> tuple[str, str]:
@@ -205,7 +205,7 @@ def split_tail(latex: str) -> tuple[str, str]:
 
 # 수식 한가운데 끼어 든 '이' / '이고': "( 1 / 5 ) ^ { x - 3 } \diamond ] \pm f ( f ( x ) ) = 3 x"
 # (글자 '이고' 를 사이에 둔 두 수식을 수식 검출이 하나로 잡은 경우)
-_MID_I = re.compile(r"\s*(?:\\circ|\\Phi|\\phi|\\diamond|\\Diamond)\s*(?:\\!\s*)?(?:\\right\s*)?\\?[\]|]\s*(?P<go>\\pm\s*)?")
+_MID_I = re.compile(r"\s*(?:\\circ|\\Phi|\\phi|\\diamond|\\Diamond)\s*(?:\\!\s*)?(?:\\right\s*)?(?:\\?[\]|]|\\rceil|\\rfloor)\s*(?P<go>\\pm\s*)?")
 
 
 def unwrap_single_row(latex: str) -> str:
