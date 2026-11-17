@@ -22,6 +22,9 @@ CASES = [
     (r"\frac{-b\pm\sqrt{b^2-4ac}}{2a}", "{{-b +- sqrt {b ^{2} - 4 a c}} over {2 a}}"),
     (r"\lim_{x \to 0} \frac{\sin x}{x}", "lim _{x -> 0} {{sin x} over {x}}"),
     (r"\begin{cases} -x^2 & (x<0) \\ x & (x \geq 0) \end{cases}", "cases{-x ^{2} & ( x < 0 ) # x & ( x GEQ 0 )}"),
+    # 조건 속 한글 (v2.0.4: 여러 줄 수식을 줄별로 읽어 합친 결과)
+    (r"\begin{cases} 2 ^ { a _ { n } } & ( a _ { n } \text{이 홀수인 경우} ) \\ 1 & ( a _ { n } \text{이 짝수인 경우} ) \end{cases}",
+     'cases{2 ^{a _{n}} & ( a _{n} "이 홀수인 경우" ) # 1 & ( a _{n} "이 짝수인 경우" )}'),
 ]
 
 if __name__ == "__main__":
