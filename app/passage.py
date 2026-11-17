@@ -225,6 +225,148 @@ class PassageReader:
                 b[0] = max(b[0], band[0])
         return b
 
+    def _split_cases(self, b, ws, cw, lh, gray):
+        """여러 줄 수식(구간별 함수 등)의 조건 칸에 한글이 있으면 줄별로 나눈다.
+        수식 인식기는 한글을 못 읽어 "(aₙ이 홀수인 경우)" 가 쓰레기 기호가 되므로,
+        조건 칸을 줄마다 [수식 조각 / 한글] 로 나눠 따로 읽고 나중에 cases 수식 하나로 다시 합친다.
+        결과: None(해당 없음) 또는 {"box", "left", "rows": [{"band": (y0, y1), "maths": [박스…]}], "cond": 박스}"""
+        H, W = gray.shape
+        inside = [w for w in ws if b[0] - cw <= (w["box"][0] + w["box"][2]) / 2
+                  and b[1] <= (w["box"][1] + w["box"][3]) / 2 <= b[3]]
+        hw = sorted((w for w in inside if HANGUL_RUN.search(w["val"]) and (w["box"][0] + w["box"][2]) / 2 <= b[2] + cw),
+                    key=lambda w: w["box"][1] + w["box"][3])
+        if sum(len(m.group(0)) for w in hw for m in HANGUL_RUN.finditer(w["val"])) < 2:
+            return None
+        groups = []
+        for w in hw:  # 한글이 있는 줄끼리 묶음
+            cy = (w["box"][1] + w["box"][3]) / 2
+            if groups and cy - groups[-1]["cy"] < 0.6 * lh:
+                groups[-1]["ws"].append(w)
+            else:
+                groups.append({"cy": cy, "ws": [w]})
+        xs = []
+        for g in groups:  # 조건의 시작 = 그 줄 첫 한글 앞에서 "(" 로 시작하는 낱말 중 가장 오른쪽 것
+            y0 = min(w["box"][1] for w in g["ws"]); y1 = max(w["box"][3] for w in g["ws"])
+            first = min(sp[0] for w in g["ws"] for sp in self._hangul_spans(w, cw))
+            cands = [w["box"][0] for w in inside if y0 <= (w["box"][1] + w["box"][3]) / 2 <= y1
+                     and w["val"].lstrip().startswith("(") and w["box"][0] <= first]
+            if not cands:
+                return None
+            xs.append(max(cands))
+        if max(xs) - min(xs) > 1.5 * cw:
+            return None
+        cx0 = int(min(xs) - 4)
+        if cx0 - b[0] < 2 * cw:
+            return None
+        cx1 = b[2]
+        for g in groups:  # 조건이 수식 칸 밖으로 이어지면(긴 조건) 이어진 낱말 끝까지
+            y0 = min(w["box"][1] for w in g["ws"]); y1 = max(w["box"][3] for w in g["ws"])
+            x = max(w["box"][2] for w in g["ws"])
+            for w in sorted((w for w in inside if y0 <= (w["box"][1] + w["box"][3]) / 2 <= y1), key=lambda w: w["box"][0]):
+                if w["box"][0] > x - cw and w["box"][0] - x < 1.5 * cw:
+                    x = max(x, w["box"][2])
+            cx1 = max(cx1, x + 2)
+        cx1 = int(min(W, cx1))
+        y0, y1 = max(0, int(b[1])), min(H, int(b[3]))
+        ys = np.nonzero((gray[y0:y1, cx0:cx1] < 160).any(axis=1))[0]
+        if len(ys) == 0:
+            return None
+        bands, st = [], ys[0]
+        for a, c in zip(ys, list(ys[1:]) + [None]):  # 잉크가 있는 줄 묶음 (분수의 위아래처럼 좁은 틈은 한 줄)
+            if c is None or c - a > 0.35 * cw:
+                bands.append((y0 + st, y0 + a + 1)); st = c
+        bands = [bd for bd in bands if bd[1] - bd[0] > 0.4 * cw]
+        if len(bands) < 2 or any(not any(bd[0] <= g["cy"] <= bd[1] for bd in bands) for g in groups):
+            return None
+        rows = []
+        for r0, r1 in bands:
+            roww = [w for w in inside if cx0 <= (w["box"][0] + w["box"][2]) / 2 <= cx1
+                    and r0 <= (w["box"][1] + w["box"][3]) / 2 <= r1]
+            spans = sorted(sp for w in roww for sp in self._hangul_spans(w, cw))
+            # 한글이 아닌 글자(수식 조각)가 있는 자리: 낱말에서 한글 부분을 뺀 나머지
+            others = []
+            for w in roww:
+                rest = HANGUL_RUN.sub(" ", w["val"]).strip()
+                if not rest:
+                    continue
+                x = w["box"][0]
+                for h0, h1, *_ in sorted(self._hangul_spans(w, cw)) + [(w["box"][2], w["box"][2])]:
+                    if h0 - x > 1:
+                        others.append((x, h0))
+                    x = max(x, h1)
+            maths, x = [], cx0
+            for s0, s1, *_ in spans + [(cx1, cx1)]:
+                # 한글 사이 빈칸은 수식이 아님: 한글 아닌 글자가 실제로 있는 틈만 수식 조각으로
+                if s0 - x > 0.3 * cw and any(min(o1, s0) - max(o0, x) > 2 for o0, o1 in others):
+                    t = _ink_box(gray, [x, r0 - 2, s0, r1 + 2])
+                    if t and t[2] - t[0] > 0.2 * cw:
+                        maths.append([float(v) for v in t])
+                x = max(x, s1)
+            rows.append({"band": (r0, r1), "maths": maths})
+        left = _ink_box(gray, [b[0], b[1], cx0 - 1, b[3]])
+        if not left:
+            return None
+        return {"box": [b[0], b[1], max(b[2], cx1), b[3]], "left": [float(v) for v in left], "rows": rows,
+                "cond": [cx0, y0, cx1, y1]}
+
+    def _join_cases(self, img, comp, items, cw):
+        """_split_cases 로 나눈 조각을 읽어 cases 수식 하나로 합친다. 줄 수가 안 맞으면 None"""
+        boxes = [comp["left"]] + [m for r in comp["rows"] for m in r["maths"]]
+        outs = [clean_latex(x) for x in self.mfr([img.crop(tuple(int(v) for v in bx)) for bx in boxes])]
+        left = outs[0]
+        m = re.search(r"\\begin\{cases\}(.*)\\end\{cases\}", left, re.S)
+        if not m:
+            return None
+        vals = [re.sub(r"\s*&[\s{}]*$", "", v).strip() for v in re.split(r"\\\\", m.group(1)) if v.strip(" {}&")]
+        if len(vals) != len(comp["rows"]):
+            return None
+        c = comp["cond"]; k = 1; lines = []
+        for val, row in zip(vals, comp["rows"]):
+            r0, r1 = row["band"]
+            parts = [(bx[0], bx[2], "math", outs[k + i]) for i, bx in enumerate(row["maths"])]
+            k += len(row["maths"])
+            parts += [(it["box"][0], it["box"][2], "text", str(it["val"])) for it in items
+                      if it["kind"] == "text" and c[0] - 2 <= (it["box"][0] + it["box"][2]) / 2 <= c[2] + cw
+                      and r0 <= (it["box"][1] + it["box"][3]) / 2 <= r1]
+            split = []
+            for x0, x1, kind, v in parts:
+                inner = sorted((a + e) / 2 for a, e, kd, _ in parts if kd == "math" and x0 < (a + e) / 2 < x1) \
+                    if kind == "text" else []
+                if not inner:
+                    split.append((x0, x1, kind, v)); continue
+                cuts = [0] + [round(len(v) * (c_ - x0) / (x1 - x0)) for c_ in inner] + [len(v)]
+                xb = [x0] + inner + [x1]
+                for i in range(len(cuts) - 1):
+                    piece = v[cuts[i]:cuts[i + 1]].strip(" :.,·|;'")
+                    if piece:
+                        split.append((xb[i] + 0.01, xb[i + 1] - 0.01, "text", piece))
+            parts = split
+            segs, prev = [], None
+            for x0, x1, kind, v in sorted(parts, key=lambda t: t[0]):
+                v = v.strip()
+                if kind == "math":  # 조각 끝에 묻어 나온 점 등 찌꺼기 제거
+                    v = re.sub(r"^(?:\\cdot|[.~]|\\[,;:! ]|\s)+|(?:\\cdot|[.~]|\\[,;:! ]|\s)+$", "", v)
+                else:
+                    v = v.replace("\\", "").replace("{", "(").replace("}", ")")
+                if not v:
+                    continue
+                if kind == "text" and prev and prev[0] == "text":
+                    segs[-1] = ("text", segs[-1][1] + (" " if x0 - prev[1] > 0.25 * cw else "") + v)
+                else:
+                    segs.append((kind, v))
+                prev = (kind, x1)
+            if self.spacer is not None:
+                try:
+                    from spacing import respace_paragraph
+                    segs = respace_paragraph(self.spacer, segs)
+                except Exception:  # noqa: BLE001
+                    pass
+            segs = [(k, v.rstrip() if k == "text" and i + 1 < len(segs) and segs[i + 1][1].startswith(")") else v)
+                    for i, (k, v) in enumerate(segs)]
+            cond = " ".join(v if k == "math" else "\\text{" + v + "}" for k, v in segs if v)
+            lines.append(val + " & " + cond.strip())
+        return left[:m.start()] + "\\begin{cases} " + " \\\\ ".join(lines) + " \\end{cases}" + left[m.end():]
+
     def _marks(self, img, lh, ws=()):
         import marks
         g = np.asarray(img.convert("L"))
@@ -293,10 +435,20 @@ class PassageReader:
             fboxes = cut
 
         boxes = []
+        comps = []  # 조건 칸에 한글이 있는 여러 줄 수식: 줄별로 나눠 읽고 나중에 합침
+        gray0 = np.asarray(img.convert("L"))
         for b in fboxes:
             h = b[3] - b[1]
             if h > 2.2 * lh:  # 여러 줄짜리 수식(cases, 큰 시그마 등)은 그대로
-                boxes.append(b); continue
+                try:
+                    comp = self._split_cases(b, ws, cw, lh, gray0)
+                except Exception:  # noqa: BLE001
+                    comp = None
+                if comp:
+                    comps.append(comp)
+                else:
+                    boxes.append(b)
+                continue
             spans = sorted(sp for w in ws for sp in self._hangul_spans(w, cw)
                            if b[0] <= (sp[0] + sp[1]) / 2 <= b[2] and b[1] <= (sp[2] + sp[3]) / 2 <= b[3])
             x = b[0]
@@ -308,10 +460,14 @@ class PassageReader:
         self._trimmed = []  # 수식 박스 끝에서 잘라 낸 한글 글자 (자리, 글자)
         boxes = [self._trim_tall(img, self._trim_edges(img, b, cw), cw, ws) for b in boxes]
         boxes = [b for b in boxes if b[2] - b[0] > 4]
+        for comp in comps:
+            for row in comp["rows"]:
+                row["maths"] = [t for t in (self._trim_edges(img, m, cw) for m in row["maths"]) if t[2] - t[0] > 4]
+        comp_boxes = [bx for comp in comps for bx in [comp["left"]] + [m for r in comp["rows"] for m in r["maths"]]]
         t1 = time.time()
 
         masked = img.copy(); d = ImageDraw.Draw(masked)
-        for b in boxes + [it["box"] for it in choice_items]:
+        for b in boxes + comp_boxes + [it["box"] for it in choice_items]:
             d.rectangle(b, fill="white")
         items = [{"box": w["box"], "kind": "text", "val": w["val"]} for w in self._words(masked, text_pass=True)]
         # 잘라 낸 글자가 혼자 떨어져 있으면(줄 끝의 '이' 등) 글자 검출이 놓치는 일이 있다: 그 자리를 덮는 글자가 없으면 넣어 줌
@@ -354,6 +510,19 @@ class PassageReader:
                 segs.append(("text", tail.strip() if not segs else tail))
             for i, (k, v) in enumerate(segs):  # 수식 오른쪽 끝 바로 뒤에 글자로 둔다 (x 를 조금씩 밀어 순서 유지)
                 items.append({"box": [b[0] + 0.01 * i, b[1], b[2], b[3]], "kind": k, "val": v})
+        for comp in comps:
+            b = comp["box"]
+            try:
+                latex = self._join_cases(img, comp, items, cw)
+            except Exception:  # noqa: BLE001
+                latex = None
+            # 조건 칸에서 글자로 읽힌 것은 수식 안으로 들어갔으므로(또는 통째로 다시 읽으므로) 뺀다
+            items = [it for it in items if not (it["kind"] == "text"
+                     and b[0] <= (it["box"][0] + it["box"][2]) / 2 <= b[2] + cw
+                     and b[1] <= (it["box"][1] + it["box"][3]) / 2 <= b[3])]
+            if latex is None:  # 줄 수가 안 맞는 등: 예전처럼 통째로 읽음
+                latex = clean_latex(self.mfr([img.crop(tuple(int(v) for v in b))])[0])
+            items.append({"box": b, "kind": "math", "val": latex})
         self.timing = (t1 - t0, t2 - t1, time.time() - t2)
 
         lines = [unify_choices(single_letters(o_after_math(zero_to_o(fix_choices(segs))))) for segs in merge_lines(items)]
