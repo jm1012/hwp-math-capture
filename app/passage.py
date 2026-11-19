@@ -552,7 +552,7 @@ class PassageReader:
         lines = [(y0, unify_choices(single_letters(o_after_math(zero_to_o(fix_choices(segs))))))
                  for y0, segs in merge_lines(items, with_y=True)]
         lines = insert_figures(lines, fig_items)
-        paras = fix_condition_labels(to_paragraphs(lines))
+        paras = fix_choice_runs(fix_condition_labels(to_paragraphs(lines)))
         if self.spacer is not None:
             from spacing import respace_paragraph
             paras = [respace_paragraph(self.spacer, p) for p in paras]
@@ -585,6 +585,27 @@ def fix_condition_labels(paras):
             paras[i] = [("text", _LABELS[k] + " " + paras[i][0][1][m.end():])] + paras[i][1:]
         k += 1
     return paras
+
+
+def fix_choice_runs(paras):
+    """①~⑤ 가 든 문단이 이어진 곳(선지 줄들)마다 번호를 ① 부터 차례로 바로잡는다 (latex_fix.fix_choice_numbers)"""
+    from latex_fix import fix_choice_numbers
+
+    def is_choice(p):
+        return all(k in ("text", "math") for k, _ in p) and any(
+            k == "text" and any(c in v for c in CHOICE_MARKS) for k, v in p)
+
+    out, i = [], 0
+    while i < len(paras):
+        if not is_choice(paras[i]):
+            out.append(paras[i]); i += 1
+            continue
+        j = i
+        while j < len(paras) and is_choice(paras[j]):
+            j += 1
+        out += fix_choice_numbers(paras[i:j])
+        i = j
+    return out
 
 
 # ------------------------------------------------------------ 줄 묶기, 문단 만들기

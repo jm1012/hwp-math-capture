@@ -383,3 +383,109 @@ def letters_to_math(segs):
         if pos < len(v):
             out.append(("text", v[pos:]))
     return out
+
+
+# ------------------------------------------------------------ 선지 번호 ①~⑤ 차례 맞추기
+_PUNCT_MARK = set("]|)[(!lI")
+
+
+def _choice_tokens(segs):
+    """선지 줄 → [(종류, 값, 앞에 띄어쓰기 있었나)]. 종류: mark(①~⑤), text, math"""
+    toks, space = [], True
+    for k, v in segs:
+        if k == "math":
+            parts = [p for p in re.split(r"\s*(?:\\[ ,;:!]\s*)*\\(?:oplus|bigoplus)\s*", v) if p.strip()]
+            for i, p in enumerate(parts):  # 수식 속 ⊕ 는 ② 를 잘못 읽은 것
+                if i:
+                    toks.append(("mark", "⊕", True))
+                toks.append(("math", p.strip(), space or i > 0))
+                space = False
+            continue
+        for m in re.finditer(r"\s+|[①-⑤]|[^\s①-⑤]+", v):
+            t = m.group(0)
+            if t.isspace():
+                space = True
+                continue
+            toks.append(("mark" if t in CIRC else "text", t, space))
+            space = False
+    return toks
+
+
+def fix_choice_numbers(lines):
+    """한 문제의 선지 줄들(1~3줄) 번호를 바로잡는다. 선지는 ① 부터 차례로 나오므로
+    - 숫자(2, 4)나 ']' 로 읽힌 번호, 수식 속 ⊕ 로 읽힌 ② 를 번호로 되돌리고
+    - 번호 없이 값이 이어지면(번호가 빠짐) 빠진 번호를 채우고, '49' 처럼 번호와 값이 붙은 것을 나눔
+    - 차례에 안 맞는 번호는 잘못 읽은 것으로 보고 앞 번호 + 1 로
+    번호가 차례대로 1~5 안에 들어맞을 때만 바꾸고, 아니면 그대로. lines: [segs, …] (줄 나눔은 그대로)"""
+    entries = []  # [줄 번호, 번호 또는 None, 값 segs]
+    for li, segs in enumerate(lines):
+        toks = _choice_tokens(segs)
+        cur = None
+        for i, (kind, val, sp) in enumerate(toks):
+            nxt = toks[i + 1] if i + 1 < len(toks) else None
+            last = max([e[1] for e in entries if e[1]] + [len(entries)]) if entries else 0
+            at_start = cur is None or bool(cur[2])  # 번호가 올 자리 (줄 처음이거나 앞 선지 값 뒤)
+            if kind == "mark":
+                cur = [li, CIRC.index(val) + 1 if val in CIRC else None, []]; entries.append(cur)
+                continue
+            if kind == "text" and at_start and nxt is not None and nxt[0] != "mark":
+                if re.fullmatch(r"[1-5]", val) and int(val) > last:
+                    cur = [li, int(val), []]; entries.append(cur)
+                    continue
+                if val in _PUNCT_MARK and cur is None:
+                    cur = [li, None, []]; entries.append(cur)
+                    continue
+            if kind == "text" and val in _PUNCT_MARK and cur is not None and not cur[2] \
+                    and nxt is not None and nxt[0] != "mark":  # '③ ( 0' 의 '(' 같은 부스러기
+                continue
+            if kind == "text" and at_start and cur is not None and re.fullmatch(r"[1-5]\d+", val) \
+                    and int(val[0]) == last + 1:  # '49' = ④ 9
+                cur = [li, int(val[0]), [("math", val[1:])]]; entries.append(cur)
+                continue
+            if cur is None or (cur[2] and sp and not (cur[2][-1][0] == "text" and cur[2][-1][1].endswith(","))):  # 번호 없이 값이 또 나옴: 번호가 빠진 선지
+                cur = [li, None, []]; entries.append(cur)
+            if cur[2]:
+                if sp:
+                    cur[2].append(("text", " "))
+            if kind == "text" and re.fullmatch(r"[-−]?\d+(?:\.\d+)?", val):
+                kind = "math"  # 번호가 빠지며 글자로 남은 숫자 값은 다른 선지처럼 수식으로
+            cur[2].append((kind if kind == "math" else "text", val.replace("−", "-") if kind == "math" else val))
+    if len(entries) < 2 or not all(e[2] for e in entries):
+        return lines
+    # 번호 매기기: 차례에 안 맞는 번호는 버리고, 빈 번호는 앞 번호 + 1 (다음 번호와 겹치면 포기)
+    filled = False
+    nums, prev = [], 0
+    for li, n, _ in entries:
+        if n is not None and n <= prev:
+            n = None
+        nums.append(n if n is not None else None)
+        prev = n if n is not None else prev + 1
+    prev = 0
+    for k, n in enumerate(nums):
+        if n is None:
+            n = prev + 1
+            nxt = next((m for m in nums[k + 1:] if m is not None), None)
+            if nxt is not None and n >= nxt:
+                return lines
+            nums[k], filled = n, True
+        prev = nums[k]
+    if filled and nums != list(range(1, len(nums) + 1)):
+        return lines  # 빠진 선지가 있는데 번호도 채워야 하면 어느 번호인지 알 수 없음
+    if nums[-1] > 5 or nums != sorted(set(nums)) or len(nums) < 4 and nums[-1] < 4:
+        return lines
+    out = [[] for _ in lines]
+    for (li, _, vals), n in zip(entries, nums):
+        if out[li]:
+            out[li].append(("text", " "))
+        out[li].append(("text", CIRC[n - 1] + " "))
+        out[li] += vals
+    res = []
+    for segs in out:
+        merged = []
+        for k, v in segs:
+            if merged and merged[-1][0] == k == "text":
+                merged[-1] = ("text", merged[-1][1] + v)
+            else:
+                merged.append((k, v))
+        res.append(merged)
+    return [r for r in res if r]
