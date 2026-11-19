@@ -396,7 +396,7 @@ class PassageReader:
         return items
 
     # ------------------------------------------------------------ 전체
-    def __call__(self, img: Image.Image):
+    def __call__(self, img: Image.Image, figures: bool = True):
         img = img.convert("RGB")
         src = img
         s = max(1.0, self.scale_to / img.width)
@@ -405,7 +405,7 @@ class PassageReader:
         t0 = time.time()
         # 그림·그래프·표: 원본에서 잘라 그림으로 넣고, 그 자리는 하얗게 지워 글자·수식 인식에서 뺀다
         fig_items = []
-        if self.figures is not None:
+        if figures and self.figures is not None:
             from figures import crop_figure
             try:
                 figs = self.figures(img)

@@ -109,6 +109,7 @@ def build_passage_json(paras) -> str:
     cp = head["ru"][0]["cp"]
     paras = [p for p in paras if p] or [[("text", "")]]
     pids = [head_id] + [_new_id() for _ in paras[1:]]
+    center_pp = None
     for i, segs in enumerate(paras):
         ch = [secd, cold] if i == 0 else []
         for kind, val in segs:
@@ -136,6 +137,12 @@ def build_passage_json(paras) -> str:
             ch.append({"t": ""})
         p = copy.deepcopy(head)
         p["ru"] = [{"cp": cp, "ch": ch}]
+        if segs and all(k == "pic" for k, _ in segs):  # 그림만 있는 문단은 가운데 정렬
+            if center_pp is None:
+                center_pp = _new_id()
+                base = d["pp"][head["pp"]]
+                d["pp"][center_pp] = dict(copy.deepcopy(base), id=len(d["pp"]), ah=3)  # ah: 문단 정렬 (3 = 가운데)
+            p["pp"] = center_pp
         p["np"] = pids[i + 1] if i + 1 < len(pids) else ""
         if i > 0:
             # 첫 문단의 bf=3 은 구역/단 나누기 표시. 그대로 복사하면 문단마다 새 쪽이 시작됨

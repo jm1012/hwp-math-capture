@@ -85,11 +85,12 @@ class Recognizer:
             except Exception:  # noqa: BLE001  못 찾으면 인식기 결과 그대로
                 return latex, ""
 
-    def read_passage(self, img: Image.Image) -> list[list[tuple[str, str]]]:
-        """글자+수식 지문 → 문단 목록 [[("text", …), ("math", LaTeX), …], …]"""
+    def read_passage(self, img: Image.Image, figures: bool = True) -> list[list[tuple[str, object]]]:
+        """글자+수식 지문 → 문단 목록 [[("text", …), ("math", LaTeX), ("image", passage.Figure), …], …]
+        figures=False 면 그림·표 찾기를 건너뜀 (그림 속 글자도 예전처럼 읽힘)"""
         self._wait()
         with self._lock:
-            return self.passage(self._prepare(img))
+            return self.passage(self._prepare(img), figures=figures)
 
 
 from formula_marks import fix_formula_marks  # noqa: E402

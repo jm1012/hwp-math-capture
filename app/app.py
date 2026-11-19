@@ -23,7 +23,7 @@ CONFIG_PATH = os.path.join(HERE, "config.json")
 LOG_PATH = os.path.join(HERE, "history.log")
 if sys.stderr is None or sys.stdout is None:  # pythonw 로 실행하면 콘솔이 없음
     sys.stdout = sys.stderr = open(os.path.join(HERE, "error.log"), "a", encoding="utf-8", buffering=1)
-DEFAULT_CONFIG = {"hotkey": "ctrl+shift+q", "passage_hotkey": "ctrl+alt+j", "font_pt": 11}
+DEFAULT_CONFIG = {"hotkey": "ctrl+shift+q", "passage_hotkey": "ctrl+alt+j", "font_pt": 11, "figures": True}
 MODES = {  # 모드: (설정 키, 이름)
     "formula": ("hotkey", "수식"),
     "passage": ("passage_hotkey", "지문"),
@@ -199,6 +199,8 @@ class App:
                                  lambda: self.events.put(("capture", "passage"))),
                 pystray.MenuItem("수식 단축키 변경…", lambda: self.events.put(("hotkey_dialog", "formula"))),
                 pystray.MenuItem("지문 단축키 변경…", lambda: self.events.put(("hotkey_dialog", "passage"))),
+                pystray.MenuItem("지문 속 그림·표도 넣기", lambda: self.events.put("toggle_figures"),
+                                 checked=lambda item: bool(self.cfg.get("figures", True))),
                 pystray.MenuItem("종료", lambda: self.events.put("quit")),
             )
             self.tray = pystray.Icon("formula_capture", img, "수식 캡처", menu)
@@ -231,6 +233,17 @@ class App:
                                     "다른 키를 골라 주세요.",
                                     ms=0, color="#d1242f")
                     self.open_hotkey_dialog(mode)
+                elif ev == "toggle_figures":
+                    self.cfg["figures"] = not self.cfg.get("figures", True)
+                    try:
+                        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+                            json.dump(self.cfg, f, ensure_ascii=False, indent=2)
+                    except OSError:
+                        pass
+                    if self.tray:
+                        self.tray.update_menu()
+                    self.toast.show("지문 속 그림·표", "그림·그래프·표를 그림으로 함께 넣습니다." if self.cfg["figures"]
+                                    else "그림·그래프·표는 넣지 않습니다 (글자·수식만, 조금 더 빠름).")
                 elif ev == "quit":
                     try:
                         if self.tray:
@@ -330,7 +343,7 @@ class App:
             from latex2hwp import latex_to_hwp
             from passage import to_markdown
             from hwp_clipboard import figure_for_hwp, set_passage_clipboard
-            paras = self.rec.read_passage(img)
+            paras = self.rec.read_passage(img, figures=bool(self.cfg.get("figures", True)))
             if not paras:
                 raise RuntimeError("글자나 수식을 찾지 못했습니다. 영역을 조금 넓게 잡아 보세요.")
             hwp = []

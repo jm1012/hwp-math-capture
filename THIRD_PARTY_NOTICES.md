@@ -10,6 +10,7 @@
 | Pix2Text MFD 1.5 (수식 위치 검출, `mfd/`) | MIT (모델 카드), 파일 메타데이터에 AGPL-3.0 (Ultralytics YOLO로 학습) | https://huggingface.co/breezedeus/pix2text-mfd-1.5 |
 | PaddleOCR PP-OCRv5 글자 검출 (`ocr/det.onnx`) | Apache-2.0 | https://huggingface.co/PaddlePaddle/PP-OCRv5_mobile_det_onnx |
 | PaddleOCR PP-OCRv5 한국어 인식 (`ocr/rec_korean.onnx`) | Apache-2.0 | https://huggingface.co/PaddlePaddle/korean_PP-OCRv5_mobile_rec_onnx |
+| PaddlePaddle PP-DocLayout_plus-L (그림·표 위치 검출, `layout/`) | Apache-2.0 | https://huggingface.co/PaddlePaddle/PP-DocLayout_plus-L_onnx |
 | quickspacer ConvSpacer3 띄어쓰기 모델 (`app/spacing_data`, numpy 로 변환) | MIT, Copyright (c) 2022 ParkSangJun | https://github.com/cosmoquester/quickspacer |
 
 > v1.x 실행 파일에 들어 있던 texify 모델(CC BY-NC-SA 4.0, 비상업 조건)은 v2부터 쓰지 않습니다.
