@@ -85,10 +85,11 @@ def _cut_marks(b, marks):
 
 
 class PassageReader:
-    def __init__(self, mfd, mfr, ocr_det: str, ocr_rec: str, ocr_dict: str, scale_to: int = 1000):
+    def __init__(self, mfd, mfr, ocr_det: str, ocr_rec: str, ocr_dict: str, scale_to: int = 1000, figures=None):
         from rapidocr import RapidOCR
         from rapidocr.ch_ppocr_rec import TextRecInput
         self.mfd, self.mfr, self.scale_to = mfd, mfr, scale_to
+        self.figures = figures  # 그림·표 찾기 (없으면 그림 처리 안 함)
         base = {"Global.use_cls": False, "Global.log_level": "error",
                 "Det.model_path": ocr_det, "Rec.model_path": ocr_rec, "Rec.rec_keys_path": ocr_dict}
         # 첫 번째 OCR (수식 박스 속 한글 위치 찾기): 기본값(짧은 변 736 이상으로 키움). 크게 볼수록 수식 박스를 정확히 자름
@@ -372,7 +373,7 @@ class PassageReader:
         g = np.asarray(img.convert("L"))
         rec = lambda b: self._rec_one(img, b)  # noqa: E731
         try:
-            items = [{"box": b, "kind": "text", "val": ch} for b, ch in marks.find_circles(g, lh)]
+            items = [{"box": b, "kind": "text", "val": ch} for b, ch in marks.keep_in_order(marks.find_circles(g, lh))]
             items += [{"box": b, "kind": "math", "val": "\\boxed{\\text{(%s)}}" % ch}
                       for b, ch in marks.find_boxes(g, lh, rec)]
         except Exception:  # noqa: BLE001  찾지 못해도 나머지는 진행
@@ -395,18 +396,41 @@ class PassageReader:
         return items
 
     # ------------------------------------------------------------ 전체
-    def __call__(self, img: Image.Image):
+    def __call__(self, img: Image.Image, figures: bool = True, letters=None):
+        """letters: (굵게, 기울임) 이면 지문 속 대문자(점 이름 등)를 모두 수식으로, 그 글꼴로 통일. None 이면 그대로"""
         img = img.convert("RGB")
+        src = img
         s = max(1.0, self.scale_to / img.width)
         if s > 1:
             img = img.resize((round(img.width * s), round(img.height * s)), Image.LANCZOS)
         t0 = time.time()
         ws = self._words(img)
+        # 그림·그래프·표: 원본에서 잘라 그림으로 넣고, 그 자리는 하얗게 지워 글자·수식 인식에서 뺀다
+        fig_items = []
+        if figures and self.figures is not None:
+            from figures import crop_figure, trim_text
+            try:
+                hs0 = sorted(w["box"][3] - w["box"][1] for w in ws if HANGUL_RUN.search(w["val"]))
+                figs = trim_text(self.figures(img), ws, hs0[len(hs0) // 2] if hs0 else 30)
+            except Exception:  # noqa: BLE001  그림 찾기가 실패해도 글자·수식은 읽음
+                figs = []
+            if figs:
+                img = img.copy(); d = ImageDraw.Draw(img)
+                for f in figs:
+                    b = f["box"]
+                    d.rectangle([b[0] - 2, b[1] - 2, b[2] + 2, b[3] + 2], fill="white")
+                    pic = crop_figure(src, [v / s for v in b])
+                    fig_items.append({"box": b, "kind": "image", "val": Figure(pic, f["kind"], s)})
+                inside = lambda w: any(f["box"][0] <= (w["box"][0] + w["box"][2]) / 2 <= f["box"][2]  # noqa: E731
+                                       and f["box"][1] <= (w["box"][1] + w["box"][3]) / 2 <= f["box"][3] for f in figs)
+                ws = [w for w in ws if not inside(w)]
         hs = sorted(w["box"][3] - w["box"][1] for w in ws if HANGUL_RUN.search(w["val"]))
         lh = hs[len(hs) // 2] if hs else 30
         cws = sorted((w["box"][2] - w["box"][0]) / len(w["val"]) for w in ws
                      if HANGUL_RUN.fullmatch(w["val"]) and len(w["val"]) >= 2)
         cw = cws[len(cws) // 2] if cws else 0.75 * lh
+        for f in fig_items:  # 그림 크기를 본문 글자 크기에 맞추려고 원본 기준 글자 폭(1em)을 기록
+            f["val"].em = cw / s
 
         # 원문자(㉠, ㉮)와 네모 칸 (가): 찾아서 기록하고 가림
         mark_items = self._marks(img, lh, ws)
@@ -525,12 +549,16 @@ class PassageReader:
             items.append({"box": b, "kind": "math", "val": latex})
         self.timing = (t1 - t0, t2 - t1, time.time() - t2)
 
-        lines = [unify_choices(single_letters(o_after_math(zero_to_o(fix_choices(segs))))) for segs in merge_lines(items)]
-        paras = fix_condition_labels(to_paragraphs(lines))
+        lines = [(y0, unify_choices(single_letters(o_after_math(zero_to_o(fix_choices(segs))))))
+                 for y0, segs in merge_lines(items, with_y=True)]
+        lines = insert_figures(lines, fig_items)
+        paras = fix_choice_runs(fix_condition_labels(to_paragraphs(lines)))
         if self.spacer is not None:
             from spacing import respace_paragraph
             paras = [respace_paragraph(self.spacer, p) for p in paras]
-        return paras
+        if letters is not None:
+            paras = [unify_letters(p, *letters) for p in paras]
+        return [space_choices(p) for p in paras]
 
 
 _LABELS = ["(가)", "(나)", "(다)", "(라)", "(마)"]
@@ -559,9 +587,79 @@ def fix_condition_labels(paras):
     return paras
 
 
+def fix_choice_runs(paras):
+    """①~⑤ 가 든 문단이 이어진 곳(선지 줄들)마다 번호를 ① 부터 차례로 바로잡는다 (latex_fix.fix_choice_numbers)"""
+    from latex_fix import fix_choice_numbers
+
+    def is_choice(p):
+        return all(k in ("text", "math") for k, _ in p) and any(
+            k == "text" and any(c in v for c in CHOICE_MARKS) for k, v in p)
+
+    out, i = [], 0
+    while i < len(paras):
+        if not is_choice(paras[i]):
+            out.append(paras[i]); i += 1
+            continue
+        j = i
+        while j < len(paras) and is_choice(paras[j]):
+            j += 1
+        out += fix_choice_numbers(paras[i:j])
+        i = j
+    return out
+
+
 # ------------------------------------------------------------ 줄 묶기, 문단 만들기
-def merge_lines(items):
-    """위치로 줄을 묶고, 줄 안에서는 왼쪽→오른쪽. 띄운 간격이 크면 공백을 넣는다."""
+class Figure:
+    """문단 속 그림 한 개. img: 원본 해상도로 자른 그림, kind: image/table/chart, scale: 인식용 확대 배율"""
+
+    def __init__(self, img: Image.Image, kind: str = "image", scale: float = 1.0):
+        self.img, self.kind, self.scale = img, kind, scale
+        self.em = None  # 원본 그림에서 본문 한글 한 글자 폭(px). 한글에 넣을 때 크기 계산에 씀
+
+    def __repr__(self):
+        return f"<그림 {self.kind} {self.img.width}x{self.img.height}>"
+
+
+def space_choices(segs):
+    """선지 줄(① ② … 가 2개 이상)의 선지 사이를 넓게, 고르게 띄운다: 한 줄 5개면 빈칸 6개, 줄에 선지가 적을수록 넓게"""
+    text = "".join(v for k, v in segs if k == "text")
+    n = sum(c in text for c in CHOICE_MARKS)
+    if n < 2:
+        return segs
+    gap = " " * {5: 6, 4: 9, 3: 12}.get(n, 16)
+    out = [(k, re.sub(r"\s*([②③④⑤])", lambda m: gap + m.group(1), v) if k == "text" else v) for k, v in segs]
+    if out and out[0][0] == "text":
+        out[0] = ("text", out[0][1].lstrip())
+    return out
+
+
+def unify_letters(segs, bold: bool, italic: bool):
+    """문단 속 알파벳 대문자 표기 통일: 글자로 읽힌 'ABC' 도 수식으로, 수식 속 mathbf/mathrm 등은 벗기고
+    대문자 묶음에 정한 글꼴(굵게/기울임)을 입힘"""
+    if any(k == "image" for k, _ in segs):
+        return segs
+    from latex_fix import letters_to_math, style_letters
+    out = [(k, style_letters(v, bold, italic) if k == "math" else v) for k, v in letters_to_math(segs)]
+    return _tidy(out) if out else out
+
+
+def insert_figures(lines, fig_items):
+    """(줄 윗변 y, segs) 목록에 그림을 한 줄씩 끼워 넣는다. 그림 아랫변보다 위에서 시작하는 줄(그림 위의 글,
+    그림 옆의 글)은 그림 앞에, 나머지는 뒤에. 결과: segs 목록"""
+    out = []
+    figs = sorted(fig_items, key=lambda f: f["box"][3])
+    i = 0
+    for y0, segs in sorted(lines, key=lambda t: t[0]):
+        while i < len(figs) and y0 >= figs[i]["box"][3] - 2:
+            out.append([("image", figs[i]["val"])]); i += 1
+        out.append(segs)
+    out += [[("image", f["val"])] for f in figs[i:]]
+    return out
+
+
+def merge_lines(items, with_y=False):
+    """위치로 줄을 묶고, 줄 안에서는 왼쪽→오른쪽. 띄운 간격이 크면 공백을 넣는다.
+    with_y: (줄 윗변 y, segs) 로 돌려줌"""
     items = sorted(items, key=lambda it: (it["box"][1] + it["box"][3]) / 2)
     lines = []
     for it in items:
@@ -588,7 +686,7 @@ def merge_lines(items):
                 segs.append(("text", " "))
             segs.append((it["kind"], it["val"]))
             prev = it
-        out.append(_tidy(segs))
+        out.append((ln["y0"], _tidy(segs)) if with_y else _tidy(segs))
     return out
 
 
@@ -624,6 +722,9 @@ def to_paragraphs(lines):
     for segs in lines:
         if not segs:
             continue
+        if any(k == "image" for k, _ in segs):  # 그림은 혼자 한 문단
+            paras.append(list(segs)); prev_alone = True
+            continue
         math_only = all(k == "math" or not v.strip() for k, v in segs)
         start_new = (not paras or prev_alone or math_only or _NEW_PARA.match(_plain(segs) or "")
                      or (paras and _ends_sentence(paras[-1])))
@@ -642,6 +743,10 @@ def _ends_sentence(segs):
     return k == "text" and bool(_END.search(v))
 
 
+def _md(k, v):
+    return v if k == "text" else "[그림]" if k == "image" else f"${v}$"
+
+
 def to_markdown(paras) -> str:
     """다른 프로그램용 글자: 수식은 $…$ 로 감쌈"""
-    return "\n".join("".join(v if k == "text" else f"${v}$" for k, v in p) for p in paras)
+    return "\n".join("".join(_md(k, v) for k, v in p) for p in paras)

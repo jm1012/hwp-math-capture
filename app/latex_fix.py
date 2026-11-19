@@ -16,6 +16,8 @@ def clean_latex(s: str) -> str:
     # a _ { n \mathop n + 1 } -> a _ { n + 1 } : 같은 글자가 \mathop 양쪽에 겹쳐 나옴
     s = re.sub(r"(?<![A-Za-z\\])([A-Za-z0-9])\s*\\mathop\s*\1(?![A-Za-z])", r"\1", s)
     s = normalize_p2t(s)
+    # \ p i / ~ p i / \p i -> \pi (인식기가 π 를 글자 두 개로 쪼개 냄: 한글에 " p i" 로 찍힘)
+    s = re.sub(r"(?:\\\s*|~\s*)p\s+i(?![A-Za-z])", r"\\pi ", s)
     # Pix2Text 는 토큰을 공백으로 나눔: \operatorname { s i n } -> \sin, 숫자 사이 공백 제거
     s = re.sub(r"\\operatorname\*?\s*\{\s*((?:[a-z]\s*)+)\}", lambda m: "\\" + m.group(1).replace(" ", ""), s)
     s = re.sub(r"(?<=\d) (?=\d)", "", s)
@@ -325,3 +327,165 @@ def brace_to_cases(s: str) -> str:
         new = "\\begin{cases}" + _rows(body) + "\\end{cases}"
         s = s[:m.start()] + new + s[j:]
         pos = m.start() + len(new)
+
+
+# ------------------------------------------------------------ 알파벳(점 이름 등) 표기 통일
+_FONT_CMD = re.compile(r"\\(mathbf|mathrm|mathit|mathsf|textbf|textit|textrm|boldsymbol|bm|operatorname\*?)\s*(?=\{)")
+_FUNCS = {"ln", "log", "sin", "cos", "tan", "lim", "max", "min", "exp", "sec", "csc", "cot"}
+_UPPER_RUN = re.compile(r"(?<![\\A-Za-z])([A-Z](?:\s*[A-Z])*)(?![A-Za-z])")
+
+
+def _unwrap_fonts(s: str) -> str:
+    """\\mathbf{A B}, \\mathrm{AB=5}, \\textit{C} 같은 글꼴 묶음을 벗김. 묶음 안이 함수 이름이면 \\ln 처럼"""
+    for _ in range(50):
+        m = _FONT_CMD.search(s)
+        if not m:
+            break
+        inner, end = _group(s, m.end())
+        name = re.sub(r"\\[,;:! ]|~|\s", "", inner)
+        rep = "\\" + name + " " if name in _FUNCS else inner
+        s = s[:m.start()] + " " + rep + " " + s[end:]
+    return s
+
+
+def style_letters(latex: str, bold: bool, italic: bool) -> str:
+    """수식 속 대문자(점·집합 이름 A, AB, P 등)의 글꼴을 하나로: bold 굵게, italic 기울임."""
+    s = _unwrap_fonts(latex)
+
+    def wrap(m):
+        t = re.sub(r"\s+", "", m.group(1))
+        if not italic:
+            t = "\\mathrm{" + t + "}"
+        if bold:
+            t = "\\mathbf{" + t + "}"
+        return t
+    if bold or not italic:
+        s = _UPPER_RUN.sub(wrap, s)
+    return re.sub(r"\s{2,}", " ", s).strip()
+
+
+_TEXT_UPPER = re.compile(r"(?<![A-Za-z0-9])([A-Z]{1,4})(?![A-Za-z])")
+
+
+def letters_to_math(segs):
+    """글자 속 대문자 묶음(삼각형 ABC, 점 D)을 수식으로 바꾼다 (지문마다 글자/수식이 섞여 나오는 것을 통일)."""
+    out = []
+    for k, v in segs:
+        if k != "text" or not _TEXT_UPPER.search(v):
+            out.append((k, v))
+            continue
+        pos = 0
+        for m in _TEXT_UPPER.finditer(v):
+            if m.start() > pos:
+                out.append(("text", v[pos:m.start()]))
+            out.append(("math", m.group(1)))
+            pos = m.end()
+        if pos < len(v):
+            out.append(("text", v[pos:]))
+    return out
+
+
+# ------------------------------------------------------------ 선지 번호 ①~⑤ 차례 맞추기
+_PUNCT_MARK = set("]|)[(!lI")
+
+
+def _choice_tokens(segs):
+    """선지 줄 → [(종류, 값, 앞에 띄어쓰기 있었나)]. 종류: mark(①~⑤), text, math"""
+    toks, space = [], True
+    for k, v in segs:
+        if k == "math":
+            parts = [p for p in re.split(r"\s*(?:\\[ ,;:!]\s*)*\\(?:oplus|bigoplus)\s*", v) if p.strip()]
+            for i, p in enumerate(parts):  # 수식 속 ⊕ 는 ② 를 잘못 읽은 것
+                if i:
+                    toks.append(("mark", "⊕", True))
+                toks.append(("math", p.strip(), space or i > 0))
+                space = False
+            continue
+        for m in re.finditer(r"\s+|[①-⑤]|[^\s①-⑤]+", v):
+            t = m.group(0)
+            if t.isspace():
+                space = True
+                continue
+            toks.append(("mark" if t in CIRC else "text", t, space))
+            space = False
+    return toks
+
+
+def fix_choice_numbers(lines):
+    """한 문제의 선지 줄들(1~3줄) 번호를 바로잡는다. 선지는 ① 부터 차례로 나오므로
+    - 숫자(2, 4)나 ']' 로 읽힌 번호, 수식 속 ⊕ 로 읽힌 ② 를 번호로 되돌리고
+    - 번호 없이 값이 이어지면(번호가 빠짐) 빠진 번호를 채우고, '49' 처럼 번호와 값이 붙은 것을 나눔
+    - 차례에 안 맞는 번호는 잘못 읽은 것으로 보고 앞 번호 + 1 로
+    번호가 차례대로 1~5 안에 들어맞을 때만 바꾸고, 아니면 그대로. lines: [segs, …] (줄 나눔은 그대로)"""
+    entries = []  # [줄 번호, 번호 또는 None, 값 segs]
+    for li, segs in enumerate(lines):
+        toks = _choice_tokens(segs)
+        cur = None
+        for i, (kind, val, sp) in enumerate(toks):
+            nxt = toks[i + 1] if i + 1 < len(toks) else None
+            last = max([e[1] for e in entries if e[1]] + [len(entries)]) if entries else 0
+            at_start = cur is None or bool(cur[2])  # 번호가 올 자리 (줄 처음이거나 앞 선지 값 뒤)
+            if kind == "mark":
+                cur = [li, CIRC.index(val) + 1 if val in CIRC else None, []]; entries.append(cur)
+                continue
+            if kind == "text" and at_start and nxt is not None and nxt[0] != "mark":
+                if re.fullmatch(r"[1-5]", val) and int(val) > last:
+                    cur = [li, int(val), []]; entries.append(cur)
+                    continue
+                if val in _PUNCT_MARK and cur is None:
+                    cur = [li, None, []]; entries.append(cur)
+                    continue
+            if kind == "text" and val in _PUNCT_MARK and cur is not None and not cur[2] \
+                    and nxt is not None and nxt[0] != "mark":  # '③ ( 0' 의 '(' 같은 부스러기
+                continue
+            if kind == "text" and at_start and cur is not None and re.fullmatch(r"[1-5]\d+", val) \
+                    and int(val[0]) == last + 1:  # '49' = ④ 9
+                cur = [li, int(val[0]), [("math", val[1:])]]; entries.append(cur)
+                continue
+            if cur is None or (cur[2] and sp and not (cur[2][-1][0] == "text" and cur[2][-1][1].endswith(","))):  # 번호 없이 값이 또 나옴: 번호가 빠진 선지
+                cur = [li, None, []]; entries.append(cur)
+            if cur[2]:
+                if sp:
+                    cur[2].append(("text", " "))
+            if kind == "text" and re.fullmatch(r"[-−]?\d+(?:\.\d+)?", val):
+                kind = "math"  # 번호가 빠지며 글자로 남은 숫자 값은 다른 선지처럼 수식으로
+            cur[2].append((kind if kind == "math" else "text", val.replace("−", "-") if kind == "math" else val))
+    if len(entries) < 2 or not all(e[2] for e in entries):
+        return lines
+    # 번호 매기기: 차례에 안 맞는 번호는 버리고, 빈 번호는 앞 번호 + 1 (다음 번호와 겹치면 포기)
+    filled = False
+    nums, prev = [], 0
+    for li, n, _ in entries:
+        if n is not None and n <= prev:
+            n = None
+        nums.append(n if n is not None else None)
+        prev = n if n is not None else prev + 1
+    prev = 0
+    for k, n in enumerate(nums):
+        if n is None:
+            n = prev + 1
+            nxt = next((m for m in nums[k + 1:] if m is not None), None)
+            if nxt is not None and n >= nxt:
+                return lines
+            nums[k], filled = n, True
+        prev = nums[k]
+    if filled and nums != list(range(1, len(nums) + 1)):
+        return lines  # 빠진 선지가 있는데 번호도 채워야 하면 어느 번호인지 알 수 없음
+    if nums[-1] > 5 or nums != sorted(set(nums)) or len(nums) < 4 and nums[-1] < 4:
+        return lines
+    out = [[] for _ in lines]
+    for (li, _, vals), n in zip(entries, nums):
+        if out[li]:
+            out[li].append(("text", " "))
+        out[li].append(("text", CIRC[n - 1] + " "))
+        out[li] += vals
+    res = []
+    for segs in out:
+        merged = []
+        for k, v in segs:
+            if merged and merged[-1][0] == k == "text":
+                merged[-1] = ("text", merged[-1][1] + v)
+            else:
+                merged.append((k, v))
+        res.append(merged)
+    return [r for r in res if r]
