@@ -387,6 +387,7 @@ def letters_to_math(segs):
 
 # ------------------------------------------------------------ 선지 번호 ①~⑤ 차례 맞추기
 _PUNCT_MARK = set("]|)[(!lI")
+_ROUND_MARK = {"D", "O", "Q", "C", "G", "o", "0", "\\bigcirc", "\\circ", "\\odot", "\\ominus", "\\otimes"}
 
 
 def _choice_tokens(segs):
@@ -435,6 +436,10 @@ def fix_choice_numbers(lines):
                 if val in _PUNCT_MARK and cur is None:
                     cur = [li, None, []]; entries.append(cur)
                     continue
+            if kind == "math" and val.strip() in _ROUND_MARK and cur is not None and cur[2] and sp \
+                    and nxt is not None and nxt[0] != "mark":  # 동그라미 번호를 D, O 같은 글자로 읽음
+                cur = [li, None, []]; entries.append(cur)
+                continue
             if kind == "text" and val in _PUNCT_MARK and cur is not None and not cur[2] \
                     and nxt is not None and nxt[0] != "mark":  # '③ ( 0' 의 '(' 같은 부스러기
                 continue
@@ -489,3 +494,42 @@ def fix_choice_numbers(lines):
                 merged.append((k, v))
         res.append(merged)
     return [r for r in res if r]
+
+
+# ------------------------------------------------------------ 콤마로 이어진 수식 나누기
+_SP_EDGE = r"(?:\s|~|\\[,;:! ]|\\q?quad)*"
+
+
+def split_commas(latex: str):
+    """'AB=2, AC=3' 처럼 괄호 밖 콤마로 이어진 수식을 [수식, ', ', 수식] 조각으로 나눈다.
+    괄호·중괄호 안의 콤마((1, 2), \\{1, 2\\}, {,})와 여러 줄 수식(\\begin)은 그대로. 결과: [(종류, 값)]"""
+    if "," not in latex or "\\begin" in latex:
+        return [("math", latex)]
+    parts, depth, start, i = [], 0, 0, 0
+    while i < len(latex):
+        c = latex[i]
+        if c == "\\":
+            nm = re.match(r"\\([{}]|[A-Za-z]+)", latex[i:])
+            if nm and nm.group(1) in ("{", "lbrace", "langle"):
+                depth += 1
+            elif nm and nm.group(1) in ("}", "rbrace", "rangle"):
+                depth -= 1
+            i += len(nm.group(0)) if nm else 2
+            continue
+        if c in "([{":
+            depth += 1
+        elif c in ")]}":
+            depth -= 1
+        elif c == "," and depth == 0:
+            parts.append(latex[start:i]); start = i + 1
+        i += 1
+    parts.append(latex[start:])
+    parts = [re.sub("^" + _SP_EDGE + "|" + _SP_EDGE + "$", "", p) for p in parts]
+    if len(parts) < 2 or any(not p for p in parts) or depth != 0:
+        return [("math", latex)]
+    out = []
+    for k, p in enumerate(parts):
+        if k:
+            out.append(("text", ", "))
+        out.append(("math", p))
+    return out

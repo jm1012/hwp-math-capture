@@ -408,10 +408,11 @@ class PassageReader:
         # 그림·그래프·표: 원본에서 잘라 그림으로 넣고, 그 자리는 하얗게 지워 글자·수식 인식에서 뺀다
         fig_items = []
         if figures and self.figures is not None:
-            from figures import crop_figure, trim_text
+            from figures import crop_figure, ink_box, trim_text
             try:
                 hs0 = sorted(w["box"][3] - w["box"][1] for w in ws if HANGUL_RUN.search(w["val"]))
                 figs = trim_text(self.figures(img), ws, hs0[len(hs0) // 2] if hs0 else 30)
+                figs = [dict(f, box=ink_box(img, f["box"])) for f in figs]  # 지우는 곳도 실제 그림까지만
             except Exception:  # noqa: BLE001  그림 찾기가 실패해도 글자·수식은 읽음
                 figs = []
             if figs:
@@ -494,6 +495,16 @@ class PassageReader:
         for b in boxes + comp_boxes + [it["box"] for it in choice_items]:
             d.rectangle(b, fill="white")
         items = [{"box": w["box"], "kind": "text", "val": w["val"]} for w in self._words(masked, text_pass=True)]
+        # 수식 검출이 놓친 근호 수식('9√77' = 9√7/7 분수를 글자로 읽음): 그 자리를 수식 인식으로 다시 읽음
+        for it in [it for it in items if _MISSED_ROOT.search(it["val"]) and not HANGUL_RUN.search(it["val"])]:
+            t = list(it["box"]); h = t[3] - t[1]
+            items.remove(it)
+            for u in [u for u in items if re.fullmatch(r"[0-9a-z]{1,3}", u["val"])  # 바로 아래 분모
+                      and t[0] <= (u["box"][0] + u["box"][2]) / 2 <= t[2] and abs(u["box"][1] - t[3]) < 0.5 * h]:
+                t = [min(t[0], u["box"][0]), t[1], max(t[2], u["box"][2]), max(t[3], u["box"][3])]
+                items.remove(u)
+            py = 0.1 * h
+            boxes.append([max(0, t[0] - 2), max(0, t[1] - py), min(img.width, t[2] + 2), min(img.height, t[3] + py)])
         # 잘라 낸 글자가 혼자 떨어져 있으면(줄 끝의 '이' 등) 글자 검출이 놓치는 일이 있다: 그 자리를 덮는 글자가 없으면 넣어 줌
         for g, ch in self._trimmed:
             gw = g[2] - g[0]
@@ -549,8 +560,8 @@ class PassageReader:
             items.append({"box": b, "kind": "math", "val": latex})
         self.timing = (t1 - t0, t2 - t1, time.time() - t2)
 
-        lines = [(y0, unify_choices(single_letters(o_after_math(zero_to_o(fix_choices(segs))))))
-                 for y0, segs in merge_lines(items, with_y=True)]
+        lines = [(cy, unify_choices(single_letters(o_after_math(zero_to_o(fix_choices(segs))))))
+                 for cy, segs in merge_lines(items, with_y=True)]
         lines = insert_figures(lines, fig_items)
         paras = fix_choice_runs(fix_condition_labels(to_paragraphs(lines)))
         if self.spacer is not None:
@@ -558,9 +569,10 @@ class PassageReader:
             paras = [respace_paragraph(self.spacer, p) for p in paras]
         if letters is not None:
             paras = [unify_letters(p, *letters) for p in paras]
-        return [space_choices(p) for p in paras]
+        return [space_choices(_split_commas(p)) for p in paras]
 
 
+_MISSED_ROOT = re.compile(r"√|\dV\d")
 _LABELS = ["(가)", "(나)", "(다)", "(라)", "(마)"]
 _LABEL_HEAD = re.compile(r"^\s*\(\s*([^()\s]{1,3})\s*\)\s*")
 
@@ -620,6 +632,19 @@ class Figure:
         return f"<그림 {self.kind} {self.img.width}x{self.img.height}>"
 
 
+def _split_commas(segs):
+    """'AB=2, AC=3' 을 수식 하나가 아니라 '수식, 수식' 으로 (latex_fix.split_commas)"""
+    from latex_fix import split_commas
+    out = []
+    for k, v in segs:
+        for k2, v2 in (split_commas(v) if k == "math" else [(k, v)]):
+            if out and k2 == "text" and out[-1][0] == "text":  # 글자끼리만 붙임 (나란한 수식은 그대로 둠)
+                out[-1] = ("text", out[-1][1] + v2)
+            else:
+                out.append((k2, v2))
+    return out
+
+
 def space_choices(segs):
     """선지 줄(① ② … 가 2개 이상)의 선지 사이를 넓게, 고르게 띄운다: 한 줄 5개면 빈칸 6개, 줄에 선지가 적을수록 넓게"""
     text = "".join(v for k, v in segs if k == "text")
@@ -644,13 +669,13 @@ def unify_letters(segs, bold: bool, italic: bool):
 
 
 def insert_figures(lines, fig_items):
-    """(줄 윗변 y, segs) 목록에 그림을 한 줄씩 끼워 넣는다. 그림 아랫변보다 위에서 시작하는 줄(그림 위의 글,
-    그림 옆의 글)은 그림 앞에, 나머지는 뒤에. 결과: segs 목록"""
+    """(줄 가운데 y, segs) 목록에 그림을 한 줄씩 끼워 넣는다. 가운데가 그림 아랫변보다 위인 줄(그림 위의 글,
+    그림 옆의 글)은 그림 앞에, 나머지는 뒤에. (윗변으로 비교하면 키 큰 분수 선지가 그림 앞으로 감) 결과: segs 목록"""
     out = []
     figs = sorted(fig_items, key=lambda f: f["box"][3])
     i = 0
-    for y0, segs in sorted(lines, key=lambda t: t[0]):
-        while i < len(figs) and y0 >= figs[i]["box"][3] - 2:
+    for cy, segs in sorted(lines, key=lambda t: t[0]):
+        while i < len(figs) and cy >= figs[i]["box"][3] - 2:
             out.append([("image", figs[i]["val"])]); i += 1
         out.append(segs)
     out += [[("image", f["val"])] for f in figs[i:]]
@@ -659,7 +684,7 @@ def insert_figures(lines, fig_items):
 
 def merge_lines(items, with_y=False):
     """위치로 줄을 묶고, 줄 안에서는 왼쪽→오른쪽. 띄운 간격이 크면 공백을 넣는다.
-    with_y: (줄 윗변 y, segs) 로 돌려줌"""
+    with_y: (줄 가운데 y, segs) 로 돌려줌"""
     items = sorted(items, key=lambda it: (it["box"][1] + it["box"][3]) / 2)
     lines = []
     for it in items:
@@ -686,7 +711,7 @@ def merge_lines(items, with_y=False):
                 segs.append(("text", " "))
             segs.append((it["kind"], it["val"]))
             prev = it
-        out.append((ln["y0"], _tidy(segs)) if with_y else _tidy(segs))
+        out.append(((ln["y0"] + ln["y1"]) / 2, _tidy(segs)) if with_y else _tidy(segs))
     return out
 
 

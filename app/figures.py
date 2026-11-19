@@ -23,6 +23,22 @@ def _inter(a, b):
     return max(0, min(a[2], b[2]) - max(a[0], b[0])) * max(0, min(a[3], b[3]) - max(a[1], b[1]))
 
 
+def _cut_edge_lines(b, lines):
+    """그림 상자 위·아래 끝에 걸친 넓은 글 줄(선지 줄 등, 모델이 'text' 로 찾은 것)을 상자에서 뺀다.
+    모델이 그림 상자를 아래 선지 줄까지 크게 잡는 경우가 있음 (사설 14번)"""
+    x0, y0, x1, y1 = b
+    w, h = x1 - x0, y1 - y0
+    for t in sorted(lines, key=lambda t: -t[3]):
+        tw = t[2] - t[0]
+        if tw < 0.6 * w or min(x1, t[2]) - max(x0, t[0]) < 0.9 * tw or t[3] - t[1] > 0.3 * h:
+            continue
+        if t[3] >= y1 - 0.1 * h and t[1] > y0 + 0.5 * h:  # 아래 끝 줄
+            y1 = min(y1, t[1] - 2)
+        elif t[1] <= y0 + 0.1 * h and t[3] < y0 + 0.5 * h:  # 위 끝 줄
+            y0 = max(y0, t[3] + 2)
+    return [x0, y0, x1, y1]
+
+
 class FigureDetector:
     SIZE = 800
 
@@ -42,6 +58,8 @@ class FigureDetector:
         feed = {"image": x, "im_shape": np.array([[self.SIZE, self.SIZE]], np.float32),
                 "scale_factor": np.array([[self.SIZE / h, self.SIZE / w]], np.float32)}
         out = self.s.run(None, feed)[0]
+        lines = [[float(v) for v in row[2:6]] for row in out
+                 if float(row[1]) >= 0.3 and 0 <= int(row[0]) < len(LABELS) and LABELS[int(row[0])] == "text"]
         cand = []
         for row in out:
             cls, sc = int(row[0]), float(row[1])
@@ -49,6 +67,8 @@ class FigureDetector:
                 continue
             b = [max(0.0, float(row[2])), max(0.0, float(row[3])), min(float(w), float(row[4])),
                  min(float(h), float(row[5]))]
+            if LABELS[cls] != "table":
+                b = _cut_edge_lines(b, lines)
             if b[2] - b[0] < 8 or b[3] - b[1] < 8:
                 continue
             cand.append({"box": b, "kind": LABELS[cls], "score": sc})
@@ -90,13 +110,19 @@ def trim_text(figs, words, lh):
     return out
 
 
+def ink_box(img: Image.Image, box):
+    """상자 안에서 실제 선·글자(어두운 점)가 있는 곳만 감싸는 상자"""
+    x0, y0, x1, y1 = (int(round(v)) for v in box)
+    x0, y0 = max(0, x0), max(0, y0)
+    g = np.asarray(img.convert("L"))[y0:y1, x0:x1] < 200
+    ys, xs = np.nonzero(g)
+    if not len(xs):
+        return [x0, y0, x1, y1]
+    return [x0 + int(xs.min()), y0 + int(ys.min()), x0 + int(xs.max()) + 1, y0 + int(ys.max()) + 1]
+
+
 def crop_figure(img: Image.Image, box, pad: int = 4) -> Image.Image:
     """그림 영역을 잘라 낸다: 실제 선·글자가 있는 곳까지 줄이고 여백을 조금 남김."""
-    x0, y0, x1, y1 = (int(round(v)) for v in box)
-    g = np.asarray(img.convert("L"))[max(0, y0):y1, max(0, x0):x1] < 200
-    ys, xs = np.nonzero(g)
-    if len(xs):
-        x0, x1 = max(0, x0) + xs.min(), max(0, x0) + xs.max() + 1
-        y0, y1 = max(0, y0) + ys.min(), max(0, y0) + ys.max() + 1
+    x0, y0, x1, y1 = ink_box(img, box)
     W, H = img.size
     return img.crop((max(0, x0 - pad), max(0, y0 - pad), min(W, x1 + pad), min(H, y1 + pad)))
