@@ -5,6 +5,7 @@ The clipboard gets only "HTML Format" (plus CF_UNICODETEXT if asked). It holds
 Hangul's data-hwpjson payload, the format Hangul itself writes when copying.
 Never set "Hwp_Native_Info": its presence makes Hangul's Paste fail.
 """
+import base64
 import copy
 import itertools
 import json
@@ -34,13 +35,70 @@ def build_html(script: str) -> bytes:
 
 _ids = itertools.count(0x100)
 
+# 그림 컨트롤 (한글 11.0.0.1623 에서 그림을 복사해 뜬 것, 2026-11-20). ci 1735618336 = 'gso', 안쪽 rc 는 '$pic'.
+# 크기 단위 HWPUNIT (1pt = 100). sw/sh·ow/oh·cw/ch 는 문서에 보이는 크기, iw/ih 는 그림 원본 크기(96dpi).
+PIC_CI = 1735618336
+_PIC_TEMPLATE = {
+    "cc": 11, "ci": PIC_CI, "id": 0, "zo": 0, "nt": 1, "tw": 1, "tf": 0, "lo": False, "swi": 0, "she": 0,
+    "swr": 4, "shr": 2, "spr": False, "pta": True, "pal": False, "pvr": 2, "phr": 2, "pva": 0, "ph1": 0, "pvo": 0,
+    "ph2": 0, "pfw": True, "pao": False, "pha": False, "ole": 0, "ori": 0, "oto": 0, "obo": 0, "ca": {},
+    "sc": "그림입니다.",
+    "rc": {"cc": 11, "ci": 611346787, "hr": "", "gl": 0, "ii": 0, "ox": 0, "oy": 0, "ow": 0, "oh": 0, "cw": 0,
+           "ch": 0, "fh": False, "fv": False, "ra": 0, "rcx": 0, "rcy": 0, "rc": False, "ri": True,
+           "in": {"ma": False, "rb": False,
+                  "tm": {"e1": 1.0, "e2": 0.0, "e3": 0.0, "e4": 0.0, "e5": 1.0, "e6": 0.0},
+                  "re": [{"sm": {"e1": 1.0, "e2": 0.0, "e3": 0.0, "e4": 0.0, "e5": 1.0, "e6": 0.0},
+                          "ro": {"e1": 1.0, "e2": 0.0, "e3": 0.0, "e4": 0.0, "e5": 1.0, "e6": 0.0}}]},
+           "re": False, "ls": {}, "iw": 0, "ih": 0, "ix0": 0, "iy0": 0, "ix1": 0, "iy1": 0, "ix2": 0, "iy2": 0,
+           "ix3": 0, "iy3": 0, "il": 0, "ir": 0, "it": 0, "ib": 0, "ml": 0, "mr": 0, "mt": 0, "mb": 0,
+           "img": {"br": 0, "co": 0, "ef": 0, "al": 0, "ie": True, "bi": ""},
+           "ef": {"sh": {}, "gl": {}, "se": {}, "re": {}}},
+}
+_inst = itertools.count(1300000001)
+
+
+def picture_control(key: str, w: int, h: int, px_w: int, px_h: int) -> dict:
+    """그림 컨트롤 하나. key: bidt 의 그림 파일 키, w/h: 문서에 보일 크기(HWPUNIT), px_w/px_h: 그림 픽셀 크기"""
+    c = copy.deepcopy(_PIC_TEMPLATE)
+    w, h = int(w), int(h)
+    c["id"] = next(_inst)
+    c["swi"], c["she"] = w, h
+    c["sc"] = f"그림입니다.\r\n원본 그림의 크기: 가로 {px_w}pixel, 세로 {px_h}pixel"
+    r = c["rc"]
+    r["ii"] = next(_inst)
+    r["ow"], r["oh"], r["cw"], r["ch"] = w, h, w, h
+    r["rcx"], r["rcy"] = w // 2, h // 2
+    r["iw"], r["ih"] = px_w * 75, px_h * 75
+    r["ir"], r["ib"] = px_w * 75, px_h * 75
+    r["ix1"], r["ix2"], r["iy2"], r["iy3"] = w, w, h, h
+    r["img"]["bi"] = key
+    return c
+
 
 def _new_id() -> str:
     return f"01DD72D6D5485C80{next(_ids):08X}"
 
 
+PIC_MAX_W = 42520  # 그림 최대 가로 (150mm, HWPUNIT). 이보다 크면 비율대로 줄임
+
+
+def figure_for_hwp(fig, body_pt: float = 10.0):
+    """passage.Figure → 한글 그림 (PNG, 가로, 세로 HWPUNIT, 픽셀 가로, 세로).
+    캡처 속 본문 한글 한 글자 폭(em)을 한글 본문 글자 크기(10pt)로 보고 같은 비율로 키움."""
+    import io
+    buf = io.BytesIO()
+    fig.img.save(buf, "PNG", optimize=True)
+    pw, ph = fig.img.size
+    unit = body_pt * 100 / fig.em if fig.em else 75.0  # 픽셀당 HWPUNIT (글자 크기를 모르면 96dpi 기준)
+    w, h = pw * unit, ph * unit
+    if w > PIC_MAX_W:
+        w, h = PIC_MAX_W, h * PIC_MAX_W / w
+    return buf.getvalue(), round(w), round(h), pw, ph
+
+
 def build_passage_json(paras) -> str:
-    """paras: [[("text", "함수 "), ("eq", "f(x)=x^2"), ...], ...] (eq 는 한글 수식 스크립트).
+    """paras: [[("text", "함수 "), ("eq", "f(x)=x^2"), ("pic", (PNG, 가로, 세로, 픽셀 가로, 세로)), ...], ...]
+    (eq 는 한글 수식 스크립트, pic 크기는 HWPUNIT).
     한글이 글자+수식을 복사할 때와 같은 구조: 문단(ro)의 ch 목록에 {"t": 글자} 와 수식 컨트롤 참조가 차례로 들어감."""
     d = json.loads(JSON_TEMPLATE.replace(_PLACEHOLDER, '"sc": ""'))
     ro = d["ro"]
@@ -59,6 +117,14 @@ def build_passage_json(paras) -> str:
                     ch[-1] = {"t": ch[-1]["t"] + val}
                 else:
                     ch.append({"t": val})
+            elif kind == "pic":  # val = (PNG 바이트, 가로, 세로 HWPUNIT, 픽셀 가로, 세로)
+                png, w, h, pw, ph = val
+                key = _new_id() + ".png"
+                d["bi"].append({"ty": "image/png", "sr": key})
+                d["bidt"][key] = base64.b64encode(png).decode("ascii")
+                cid = _new_id()
+                d["cs"][cid] = picture_control(key, w, h, pw, ph)
+                ch.append({"cc": 11, "ci": PIC_CI, "co": cid})
             else:
                 cid = _new_id()
                 c = copy.deepcopy(eq_tpl)

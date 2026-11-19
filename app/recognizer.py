@@ -2,9 +2,11 @@
 
 - 수식 한 개:   Pix2Text MFR  → LaTeX
 - 지문(글자+수식): Pix2Text MFD(수식 위치) + PaddleOCR 한국어 + MFR  → 문단 목록
+  (+ PP-DocLayout 으로 그림·그래프·표를 찾아 그림으로 잘라 넣음)
 """
 from __future__ import annotations
 
+import os
 import threading
 
 from PIL import Image, ImageOps
@@ -32,10 +34,17 @@ class Recognizer:
             from mfr import MFR
             from passage import PassageReader
             self.mfr = MFR(models.path("mfr"))
+            figures = None
+            if os.path.isfile(models.path("layout/pp-doclayout-plus-l.onnx")):
+                try:
+                    from figures import FigureDetector
+                    figures = FigureDetector(models.path("layout/pp-doclayout-plus-l.onnx"))
+                except Exception:  # noqa: BLE001  그림 찾기 모델을 못 불러와도 글자·수식은 동작
+                    figures = None
             self.passage = PassageReader(
                 MFD(models.path("mfd/pix2text-mfd-1.5.onnx")), self.mfr,
                 models.path("ocr/det.onnx"), models.path("ocr/rec_korean.onnx"),
-                models.path("ocr/rec_korean_dict.txt"))
+                models.path("ocr/rec_korean_dict.txt"), figures=figures)
         except Exception as e:  # noqa: BLE001
             self.error = e
         finally:

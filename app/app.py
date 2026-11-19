@@ -329,7 +329,7 @@ class App:
         try:
             from latex2hwp import latex_to_hwp
             from passage import to_markdown
-            from hwp_clipboard import set_passage_clipboard
+            from hwp_clipboard import figure_for_hwp, set_passage_clipboard
             paras = self.rec.read_passage(img)
             if not paras:
                 raise RuntimeError("글자나 수식을 찾지 못했습니다. 영역을 조금 넓게 잡아 보세요.")
@@ -339,6 +339,9 @@ class App:
                 for k, v in para:
                     if k == "text":
                         segs.append(("text", v))
+                        continue
+                    if k == "image":
+                        segs.append(("pic", figure_for_hwp(v)))
                         continue
                     try:
                         segs.append(("eq", latex_to_hwp(v)))
@@ -350,8 +353,10 @@ class App:
             with open(LOG_PATH, "a", encoding="utf-8") as f:
                 f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}\t[지문]\t{md.replace(chr(10), ' / ')}\n")
             n_eq = sum(k == "math" for p in paras for k, _ in p)
+            n_pic = sum(k == "image" for p in paras for k, _ in p)
             preview = md if len(md) <= 220 else md[:220] + "…"
-            self.events.put(("result", "ok", f"문단 {len(paras)}개, 수식 {n_eq}개\n{preview}", time.time() - t0))
+            pics = f", 그림 {n_pic}개" if n_pic else ""
+            self.events.put(("result", "ok", f"문단 {len(paras)}개, 수식 {n_eq}개{pics}\n{preview}", time.time() - t0))
         except Exception as e:  # noqa: BLE001
             traceback.print_exc()
             self.events.put(("result", "err", str(e), 0))

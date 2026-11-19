@@ -5,6 +5,7 @@ model/
                                                   + prepare() 가 만드는 encoder_int8.onnx, decoder_kv.npz (속도용)
   mfd/  수식 위치   Pix2Text MFD 1.5 (MIT / AGPL-3.0) pix2text-mfd-1.5.onnx
   ocr/  한글 OCR   PaddleOCR PP-OCRv5 (Apache-2.0)  det.onnx, rec_korean.onnx, rec_korean_dict.txt
+  layout/ 그림·표 위치  PP-DocLayout_plus-L (Apache-2.0)  pp-doclayout-plus-l.onnx  (없으면 그림 처리만 꺼짐)
 """
 from __future__ import annotations
 
@@ -20,7 +21,10 @@ FILES = {
     "ocr/det.onnx": "PaddlePaddle/PP-OCRv5_mobile_det_onnx/resolve/main/inference.onnx",
     "ocr/rec_korean.onnx": "PaddlePaddle/korean_PP-OCRv5_mobile_rec_onnx/resolve/main/inference.onnx",
     "ocr/rec_korean.yml": "PaddlePaddle/korean_PP-OCRv5_mobile_rec_onnx/resolve/main/inference.yml",
+    "layout/pp-doclayout-plus-l.onnx": "PaddlePaddle/PP-DocLayout_plus-L_onnx/resolve/main/inference.onnx",
 }
+# 없어도 앱이 도는 파일 (해당 기능만 꺼짐)
+OPTIONAL = {"layout/pp-doclayout-plus-l.onnx"}
 
 
 def model_dir() -> str:
@@ -47,12 +51,12 @@ ALT = {"mfr/encoder_model.onnx": "mfr/encoder_int8.onnx", "mfr/decoder_model.onn
 def missing(d: str | None = None, for_run: bool = True) -> list[str]:
     d = d or model_dir()
     has = lambda k: os.path.isfile(os.path.join(d, *k.split("/")))  # noqa: E731
-    need = [k for k in FILES if not k.endswith(".yml")] + ["ocr/rec_korean_dict.txt"]
+    need = [k for k in FILES if not k.endswith(".yml") and k not in OPTIONAL] + ["ocr/rec_korean_dict.txt"]
     return [k for k in need if not has(k) and not (for_run and k in ALT and has(ALT[k]))]
 
 
 def download(d: str | None = None, log=print) -> str:
-    """빠진 모델 파일을 Hugging Face 에서 받는다 (약 230MB)."""
+    """빠진 모델 파일을 Hugging Face 에서 받는다 (약 360MB)."""
     import urllib.request
     d = d or os.path.join(os.path.dirname(os.path.abspath(__file__)), "model")
     for rel, url in FILES.items():
