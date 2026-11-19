@@ -30,3 +30,4 @@ research/**/imgs/
 Thumbs.db
 .DS_Store
 research/step3-passage/gt.json
+app/version_info.txt
