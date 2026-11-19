@@ -373,7 +373,7 @@ class PassageReader:
         g = np.asarray(img.convert("L"))
         rec = lambda b: self._rec_one(img, b)  # noqa: E731
         try:
-            items = [{"box": b, "kind": "text", "val": ch} for b, ch in marks.find_circles(g, lh)]
+            items = [{"box": b, "kind": "text", "val": ch} for b, ch in marks.keep_in_order(marks.find_circles(g, lh))]
             items += [{"box": b, "kind": "math", "val": "\\boxed{\\text{(%s)}}" % ch}
                       for b, ch in marks.find_boxes(g, lh, rec)]
         except Exception:  # noqa: BLE001  찾지 못해도 나머지는 진행
@@ -396,19 +396,22 @@ class PassageReader:
         return items
 
     # ------------------------------------------------------------ 전체
-    def __call__(self, img: Image.Image, figures: bool = True):
+    def __call__(self, img: Image.Image, figures: bool = True, letters=None):
+        """letters: (굵게, 기울임) 이면 지문 속 대문자(점 이름 등)를 모두 수식으로, 그 글꼴로 통일. None 이면 그대로"""
         img = img.convert("RGB")
         src = img
         s = max(1.0, self.scale_to / img.width)
         if s > 1:
             img = img.resize((round(img.width * s), round(img.height * s)), Image.LANCZOS)
         t0 = time.time()
+        ws = self._words(img)
         # 그림·그래프·표: 원본에서 잘라 그림으로 넣고, 그 자리는 하얗게 지워 글자·수식 인식에서 뺀다
         fig_items = []
         if figures and self.figures is not None:
-            from figures import crop_figure
+            from figures import crop_figure, trim_text
             try:
-                figs = self.figures(img)
+                hs0 = sorted(w["box"][3] - w["box"][1] for w in ws if HANGUL_RUN.search(w["val"]))
+                figs = trim_text(self.figures(img), ws, hs0[len(hs0) // 2] if hs0 else 30)
             except Exception:  # noqa: BLE001  그림 찾기가 실패해도 글자·수식은 읽음
                 figs = []
             if figs:
@@ -418,7 +421,9 @@ class PassageReader:
                     d.rectangle([b[0] - 2, b[1] - 2, b[2] + 2, b[3] + 2], fill="white")
                     pic = crop_figure(src, [v / s for v in b])
                     fig_items.append({"box": b, "kind": "image", "val": Figure(pic, f["kind"], s)})
-        ws = self._words(img)
+                inside = lambda w: any(f["box"][0] <= (w["box"][0] + w["box"][2]) / 2 <= f["box"][2]  # noqa: E731
+                                       and f["box"][1] <= (w["box"][1] + w["box"][3]) / 2 <= f["box"][3] for f in figs)
+                ws = [w for w in ws if not inside(w)]
         hs = sorted(w["box"][3] - w["box"][1] for w in ws if HANGUL_RUN.search(w["val"]))
         lh = hs[len(hs) // 2] if hs else 30
         cws = sorted((w["box"][2] - w["box"][0]) / len(w["val"]) for w in ws
@@ -551,7 +556,9 @@ class PassageReader:
         if self.spacer is not None:
             from spacing import respace_paragraph
             paras = [respace_paragraph(self.spacer, p) for p in paras]
-        return paras
+        if letters is not None:
+            paras = [unify_letters(p, *letters) for p in paras]
+        return [space_choices(p) for p in paras]
 
 
 _LABELS = ["(가)", "(나)", "(다)", "(라)", "(마)"]
@@ -590,6 +597,29 @@ class Figure:
 
     def __repr__(self):
         return f"<그림 {self.kind} {self.img.width}x{self.img.height}>"
+
+
+def space_choices(segs):
+    """선지 줄(① ② … 가 2개 이상)의 선지 사이를 넓게, 고르게 띄운다: 한 줄 5개면 빈칸 6개, 줄에 선지가 적을수록 넓게"""
+    text = "".join(v for k, v in segs if k == "text")
+    n = sum(c in text for c in CHOICE_MARKS)
+    if n < 2:
+        return segs
+    gap = " " * {5: 6, 4: 9, 3: 12}.get(n, 16)
+    out = [(k, re.sub(r"\s*([②③④⑤])", lambda m: gap + m.group(1), v) if k == "text" else v) for k, v in segs]
+    if out and out[0][0] == "text":
+        out[0] = ("text", out[0][1].lstrip())
+    return out
+
+
+def unify_letters(segs, bold: bool, italic: bool):
+    """문단 속 알파벳 대문자 표기 통일: 글자로 읽힌 'ABC' 도 수식으로, 수식 속 mathbf/mathrm 등은 벗기고
+    대문자 묶음에 정한 글꼴(굵게/기울임)을 입힘"""
+    if any(k == "image" for k, _ in segs):
+        return segs
+    from latex_fix import letters_to_math, style_letters
+    out = [(k, style_letters(v, bold, italic) if k == "math" else v) for k, v in letters_to_math(segs)]
+    return _tidy(out) if out else out
 
 
 def insert_figures(lines, fig_items):

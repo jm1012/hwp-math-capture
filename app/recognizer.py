@@ -85,12 +85,13 @@ class Recognizer:
             except Exception:  # noqa: BLE001  못 찾으면 인식기 결과 그대로
                 return latex, ""
 
-    def read_passage(self, img: Image.Image, figures: bool = True) -> list[list[tuple[str, object]]]:
+    def read_passage(self, img: Image.Image, figures: bool = True, letters=None) -> list[list[tuple[str, object]]]:
         """글자+수식 지문 → 문단 목록 [[("text", …), ("math", LaTeX), ("image", passage.Figure), …], …]
-        figures=False 면 그림·표 찾기를 건너뜀 (그림 속 글자도 예전처럼 읽힘)"""
+        figures=False 면 그림·표 찾기를 건너뜀 (그림 속 글자도 예전처럼 읽힘)
+        letters=(굵게, 기울임) 이면 대문자 알파벳을 모두 수식으로, 그 글꼴로 통일"""
         self._wait()
         with self._lock:
-            return self.passage(self._prepare(img), figures=figures)
+            return self.passage(self._prepare(img), figures=figures, letters=letters)
 
 
 from formula_marks import fix_formula_marks  # noqa: E402

@@ -16,6 +16,8 @@ def clean_latex(s: str) -> str:
     # a _ { n \mathop n + 1 } -> a _ { n + 1 } : 같은 글자가 \mathop 양쪽에 겹쳐 나옴
     s = re.sub(r"(?<![A-Za-z\\])([A-Za-z0-9])\s*\\mathop\s*\1(?![A-Za-z])", r"\1", s)
     s = normalize_p2t(s)
+    # \ p i / ~ p i / \p i -> \pi (인식기가 π 를 글자 두 개로 쪼개 냄: 한글에 " p i" 로 찍힘)
+    s = re.sub(r"(?:\\\s*|~\s*)p\s+i(?![A-Za-z])", r"\\pi ", s)
     # Pix2Text 는 토큰을 공백으로 나눔: \operatorname { s i n } -> \sin, 숫자 사이 공백 제거
     s = re.sub(r"\\operatorname\*?\s*\{\s*((?:[a-z]\s*)+)\}", lambda m: "\\" + m.group(1).replace(" ", ""), s)
     s = re.sub(r"(?<=\d) (?=\d)", "", s)
@@ -325,3 +327,59 @@ def brace_to_cases(s: str) -> str:
         new = "\\begin{cases}" + _rows(body) + "\\end{cases}"
         s = s[:m.start()] + new + s[j:]
         pos = m.start() + len(new)
+
+
+# ------------------------------------------------------------ 알파벳(점 이름 등) 표기 통일
+_FONT_CMD = re.compile(r"\\(mathbf|mathrm|mathit|mathsf|textbf|textit|textrm|boldsymbol|bm|operatorname\*?)\s*(?=\{)")
+_FUNCS = {"ln", "log", "sin", "cos", "tan", "lim", "max", "min", "exp", "sec", "csc", "cot"}
+_UPPER_RUN = re.compile(r"(?<![\\A-Za-z])([A-Z](?:\s*[A-Z])*)(?![A-Za-z])")
+
+
+def _unwrap_fonts(s: str) -> str:
+    """\\mathbf{A B}, \\mathrm{AB=5}, \\textit{C} 같은 글꼴 묶음을 벗김. 묶음 안이 함수 이름이면 \\ln 처럼"""
+    for _ in range(50):
+        m = _FONT_CMD.search(s)
+        if not m:
+            break
+        inner, end = _group(s, m.end())
+        name = re.sub(r"\\[,;:! ]|~|\s", "", inner)
+        rep = "\\" + name + " " if name in _FUNCS else inner
+        s = s[:m.start()] + " " + rep + " " + s[end:]
+    return s
+
+
+def style_letters(latex: str, bold: bool, italic: bool) -> str:
+    """수식 속 대문자(점·집합 이름 A, AB, P 등)의 글꼴을 하나로: bold 굵게, italic 기울임."""
+    s = _unwrap_fonts(latex)
+
+    def wrap(m):
+        t = re.sub(r"\s+", "", m.group(1))
+        if not italic:
+            t = "\\mathrm{" + t + "}"
+        if bold:
+            t = "\\mathbf{" + t + "}"
+        return t
+    if bold or not italic:
+        s = _UPPER_RUN.sub(wrap, s)
+    return re.sub(r"\s{2,}", " ", s).strip()
+
+
+_TEXT_UPPER = re.compile(r"(?<![A-Za-z0-9])([A-Z]{1,4})(?![A-Za-z])")
+
+
+def letters_to_math(segs):
+    """글자 속 대문자 묶음(삼각형 ABC, 점 D)을 수식으로 바꾼다 (지문마다 글자/수식이 섞여 나오는 것을 통일)."""
+    out = []
+    for k, v in segs:
+        if k != "text" or not _TEXT_UPPER.search(v):
+            out.append((k, v))
+            continue
+        pos = 0
+        for m in _TEXT_UPPER.finditer(v):
+            if m.start() > pos:
+                out.append(("text", v[pos:m.start()]))
+            out.append(("math", m.group(1)))
+            pos = m.end()
+        if pos < len(v):
+            out.append(("text", v[pos:]))
+    return out

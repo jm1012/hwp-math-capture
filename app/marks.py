@@ -118,6 +118,21 @@ def find_circles(g, lh):
     return out
 
 
+def keep_in_order(found):
+    """원문자는 지문에 ㉠, ㉡, ㉢ … (또는 ㉮, ㉯ …) 차례로 나온다. 앞 글자 없이 뒤 글자만 나온 것은
+    굵은 O·C 같은 알파벳을 원문자로 잘못 본 것이라 버린다 (예: 원점 O → ㉧, C → ㉡).
+    found: [(box, ch), …]. ㉠(㉮)이 있어야 하고, 이어지는 차례에서 한 칸 건너뛴 것까지는 봐 줌."""
+    out = []
+    for series in (CIRCLED[:14], CIRCLED[14:]):
+        have = {ch for _, ch in found if ch in series}
+        n = 0  # 맨 앞부터 이어지는 글자 수
+        while n < len(series) and series[n] in have:
+            n += 1
+        ok = set(series[:n + 2]) if n else set()
+        out += [(b, ch) for b, ch in found if ch in series and ch in ok]
+    return out + [(b, ch) for b, ch in found if ch not in CIRCLED]
+
+
 CHOICES = DIGITS[:5]  # 보기 번호 ①~⑤: OCR 이 3, 4 로 읽거나 통째로 놓치는 일이 많아 모양으로 직접 찾음
 
 

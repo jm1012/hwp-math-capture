@@ -62,6 +62,34 @@ class FigureDetector:
         return sorted(keep, key=lambda c: (c["box"][1], c["box"][0]))
 
 
+_CHOICE = "①②③④⑤"
+
+
+def _is_body_text(val: str) -> bool:
+    """그림 상자 안에서 그림이 아니라 본문으로 볼 글자: 선지 번호 ①~⑤.
+    (한글 글자는 기준으로 쓰지 않음: 동전 그림의 '한국은행', '1번째 자리' 같은 그림 속 글자가 있음)"""
+    return any(c in val for c in _CHOICE)
+
+
+def trim_text(figs, words, lh):
+    """그림 상자가 선지 줄까지 품고 있으면 그 줄을 빼고 위나 아래 큰 쪽만 남긴다.
+    남는 쪽이 너무 작으면 그 그림은 버린다. figs: FigureDetector 결과, words: [{"box", "val"}] (OCR 단어)"""
+    out = []
+    for f in figs:
+        b = list(f["box"])
+        inner = [w["box"] for w in words if _is_body_text(w["val"])
+                 and b[0] <= (w["box"][0] + w["box"][2]) / 2 <= b[2] and b[1] <= (w["box"][1] + w["box"][3]) / 2 <= b[3]]
+        if inner:
+            top = [b[0], b[1], b[2], min(t[1] for t in inner) - 2]
+            bot = [b[0], max(t[3] for t in inner) + 2, b[2], b[3]]
+            keep = max((top, bot), key=lambda t: t[3] - t[1])
+            if keep[3] - keep[1] < max(3 * lh, 0.3 * (b[3] - b[1])):
+                continue
+            b = keep
+        out.append(dict(f, box=b))
+    return out
+
+
 def crop_figure(img: Image.Image, box, pad: int = 4) -> Image.Image:
     """그림 영역을 잘라 낸다: 실제 선·글자가 있는 곳까지 줄이고 여백을 조금 남김."""
     x0, y0, x1, y1 = (int(round(v)) for v in box)

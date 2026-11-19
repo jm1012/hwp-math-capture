@@ -23,7 +23,8 @@ CONFIG_PATH = os.path.join(HERE, "config.json")
 LOG_PATH = os.path.join(HERE, "history.log")
 if sys.stderr is None or sys.stdout is None:  # pythonw 로 실행하면 콘솔이 없음
     sys.stdout = sys.stderr = open(os.path.join(HERE, "error.log"), "a", encoding="utf-8", buffering=1)
-DEFAULT_CONFIG = {"hotkey": "ctrl+shift+q", "passage_hotkey": "ctrl+alt+j", "font_pt": 11, "figures": True}
+DEFAULT_CONFIG = {"hotkey": "ctrl+shift+q", "passage_hotkey": "ctrl+alt+j", "font_pt": 11, "figures": True,
+                  "letters_unify": True, "letters_bold": True, "letters_italic": False}
 MODES = {  # 모드: (설정 키, 이름)
     "formula": ("hotkey", "수식"),
     "passage": ("passage_hotkey", "지문"),
@@ -201,6 +202,13 @@ class App:
                 pystray.MenuItem("지문 단축키 변경…", lambda: self.events.put(("hotkey_dialog", "passage"))),
                 pystray.MenuItem("지문 속 그림·표도 넣기", lambda: self.events.put("toggle_figures"),
                                  checked=lambda item: bool(self.cfg.get("figures", True))),
+                pystray.MenuItem("알파벳 표기", pystray.Menu(
+                    pystray.MenuItem("하나로 통일 (모두 수식으로)", lambda: self.events.put(("toggle", "letters_unify")),
+                                     checked=lambda item: bool(self.cfg.get("letters_unify", True))),
+                    pystray.MenuItem("굵게", lambda: self.events.put(("toggle", "letters_bold")),
+                                     checked=lambda item: bool(self.cfg.get("letters_bold", True))),
+                    pystray.MenuItem("기울임", lambda: self.events.put(("toggle", "letters_italic")),
+                                     checked=lambda item: bool(self.cfg.get("letters_italic", False))))),
                 pystray.MenuItem("종료", lambda: self.events.put("quit")),
             )
             self.tray = pystray.Icon("formula_capture", img, "수식 캡처", menu)
@@ -233,6 +241,16 @@ class App:
                                     "다른 키를 골라 주세요.",
                                     ms=0, color="#d1242f")
                     self.open_hotkey_dialog(mode)
+                elif kind == "toggle":
+                    key = ev[1]
+                    self.cfg[key] = not self.cfg.get(key, DEFAULT_CONFIG.get(key, False))
+                    try:
+                        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+                            json.dump(self.cfg, f, ensure_ascii=False, indent=2)
+                    except OSError:
+                        pass
+                    if self.tray:
+                        self.tray.update_menu()
                 elif ev == "toggle_figures":
                     self.cfg["figures"] = not self.cfg.get("figures", True)
                     try:
@@ -343,7 +361,10 @@ class App:
             from latex2hwp import latex_to_hwp
             from passage import to_markdown
             from hwp_clipboard import figure_for_hwp, set_passage_clipboard
-            paras = self.rec.read_passage(img, figures=bool(self.cfg.get("figures", True)))
+            c = self.cfg
+            letters = (bool(c.get("letters_bold", True)), bool(c.get("letters_italic", False))) \
+                if c.get("letters_unify", True) else None
+            paras = self.rec.read_passage(img, figures=bool(c.get("figures", True)), letters=letters)
             if not paras:
                 raise RuntimeError("글자나 수식을 찾지 못했습니다. 영역을 조금 넓게 잡아 보세요.")
             hwp = []
