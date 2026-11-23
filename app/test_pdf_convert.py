@@ -77,6 +77,7 @@ def test_write_hwpx():
         assert re.findall(r"<hp:script>(.*?)</hp:script>", s) == ["f(x)=x^2", "{1} over {2}"]
         assert any(n.startswith("BinData/") for n in z.namelist())
         assert 'right="3000" top="0" bottom="2250"' in s and 'dimwidth="3000"' in s  # 40×30 픽셀 × 75
+        z.close()
         # 앞 문단의 여백·정렬이 다음 문단으로 번지지 않음 (문단 모양 번호가 서로 달라야 함)
         refs = re.findall(r'<hp:p [^>]*paraPrIDRef="(\d+)"', s)
         assert refs[1] != refs[2] and refs[0] != refs[2]

@@ -26,6 +26,8 @@ class Report:
     warnings: list = field(default_factory=list)
     seconds: float = 0.0
     counts: dict = field(default_factory=dict)
+    flagged: list = field(default_factory=list)     # (쪽, 번호, 의심 이유) — 문제 확인 창에서 볼 것
+    work_dir: str | None = None
 
     def text(self) -> str:
         nums = ", ".join(str(n) for n in self.problems)
@@ -42,6 +44,8 @@ class Report:
                 runs.append([p, p, why])
         out += [f"{a}쪽 건너뜀: {why}" if a == b else f"{a}~{b}쪽 건너뜀: {why}" for a, b, why in runs]
         out += self.warnings
+        if self.flagged:
+            out.append(f"확인해 볼 문제 {len(self.flagged)}개 ([문제 확인] 에서 볼 수 있음)")
         return "\n".join(out)
 
 
@@ -168,7 +172,7 @@ def _put_number(hwp, num, erased):
 
 
 def convert(pdf_path: str, out_path: str, reader, *, pages: str | None = None, dpi: int = 150,
-            figures: bool = True, letters=None, progress=None, cancel=None, log=None, debug_dir=None) -> Report:
+            figures: bool = True, letters=None, progress=None, cancel=None, log=None, debug_dir=None, work_dir=None) -> Report:
     """reader: passage.PassageReader (또는 같은 꼴로 부를 수 있는 것, rec_image 필요).
     progress(완료 수, 전체 수, 글) 로 진행 상황을 알림. cancel: threading.Event (set 되면 멈춤, 지금까지 결과는 저장 안 함)"""
     from hwpx_writer import write_hwpx
@@ -181,6 +185,7 @@ def convert(pdf_path: str, out_path: str, reader, *, pages: str | None = None, d
 
     # 1) 쪽마다 단·문제 나누기
     page_info, jobs = [], []   # jobs: (쪽 번호, Problem, 쪽 그림)
+    page_words = {}
     seen_problem = False
     odd_even = None
     for n, i in enumerate(idx):
@@ -213,6 +218,7 @@ def convert(pdf_path: str, out_path: str, reader, *, pages: str | None = None, d
             continue
         seen_problem = seen_problem or any(p.num is not None for p in probs)
         info.update(page=i, size=img.size, text=bool(words))
+        page_words[i] = words
         page_info.append(info)
         rep.done_pages.append(i + 1)
         for p in probs:
@@ -225,6 +231,8 @@ def convert(pdf_path: str, out_path: str, reader, *, pages: str | None = None, d
     # 2) 문제마다 인식
     results = []
     ems = []
+    flags, crops = [], {}
+    from pdf_work import hangul_missing, problem_flags
     total = len(jobs)
     base = len(idx)
     for k, (p, img, info) in enumerate(jobs):
@@ -232,6 +240,7 @@ def convert(pdf_path: str, out_path: str, reader, *, pages: str | None = None, d
             raise Cancelled
         if p.kind == "notice":
             results.append(None)
+            flags.append([])
             continue
         label = f"{p.page + 1}쪽 " + (f"{p.num}번" if p.num is not None else "(이어지는 내용)")
         say(base + 3 * base * k // total, base * 4, f"{label} 인식 중")
@@ -244,6 +253,10 @@ def convert(pdf_path: str, out_path: str, reader, *, pages: str | None = None, d
         if getattr(reader, "last_em", None):
             ems.append(reader.last_em)
         results.append(paras)
+        miss = hangul_missing(page_words.get(p.page) or [], p.blocks, paras)
+        flags.append(problem_flags(paras, getattr(reader, "notes", []), pim.size, miss))
+        if work_dir:
+            crops[k] = pim
         if debug_dir:  # 문제 그림과 인식 결과(LaTeX)를 남김: 오류 원인 찾기용
             import json
             import os
@@ -255,7 +268,32 @@ def convert(pdf_path: str, out_path: str, reader, *, pages: str | None = None, d
         if log:
             log(f"{label}: 문단 {len(paras)}개")
 
-    # 3) 글자 크기·쪽 여백 (원본에서 잼)
+    # 3) 작업 파일 (문제 확인 창에서 다시 읽기·다시 저장)
+    if work_dir:
+        from pdf_work import Work, save
+        ids = {id(info): n for n, info in enumerate(page_info)}
+        save(Work(dir=work_dir, pdf=pdf_path, out=out_path, dpi=dpi, figures=figures, letters=letters,
+                  page_info=page_info, probs=[p for p, _, _ in jobs], pinfo=[ids[id(inf)] for _, _, inf in jobs],
+                  results=results, ems=ems, flags=flags, edited=[False] * len(jobs)), crops)
+        rep.work_dir = work_dir
+    rep.flagged = [(p.page + 1, p.num, f) for (p, _, _), f in zip(jobs, flags) if f]
+
+    say(base * 4 - 1, base * 4, "한글 파일 저장 중")
+    rep.counts = build([(p, inf) for p, _, inf in jobs], results, page_info, ems, dpi, out_path)
+    # 빠진 번호 경고 (1, 2, 4 → 3번 없음). 선택과목처럼 번호가 다시 작아지는 곳은 새 묶음으로 봄
+    nums = rep.problems
+    for a, b in zip(nums, nums[1:]):
+        if b > a + 1:
+            rep.warnings.append(f"{a}번과 {b}번 사이 문제를 찾지 못함")
+    rep.seconds = time.time() - t0
+    say(base * 4, base * 4, "완료")
+    return rep
+
+
+def build(jobs, results, page_info, ems, dpi, out_path):
+    """인식 결과 → .hwpx (다시 인식하지 않음). jobs: (문제, 쪽 정보) 목록. → 문단·수식·그림 개수"""
+    from hwpx_writer import write_hwpx
+    # 글자 크기·쪽 여백 (원본에서 잼)
     em_px = statistics.median(ems) if ems else dpi * 10 / 72
     body_pt = min(14.0, max(8.0, round(em_px / dpi * 72 * 2) / 2))
     px2pt = 72 / dpi
@@ -263,11 +301,11 @@ def convert(pdf_path: str, out_path: str, reader, *, pages: str | None = None, d
     lefts, rights, gaps = [], [], []
     for info in page_info:
         cs = info["cols"]
-        pb = [p.box for p, _, inf in jobs if inf is info]
+        pb = [p.box for p, inf in jobs if inf is info]
         if not pb:
             continue
-        c0 = [b for p, _, inf in jobs if inf is info and p.col == 0 for b in [p.box]]
-        c1 = [b for p, _, inf in jobs if inf is info and p.col == len(cs) - 1 and len(cs) > 1 for b in [p.box]]
+        c0 = [b for p, inf in jobs if inf is info and p.col == 0 for b in [p.box]]
+        c1 = [b for p, inf in jobs if inf is info and p.col == len(cs) - 1 and len(cs) > 1 for b in [p.box]]
         lefts.append(min(b[0] for b in pb))
         rights.append(max(b[2] for b in pb))
         if c0 and c1:
@@ -282,10 +320,10 @@ def convert(pdf_path: str, out_path: str, reader, *, pages: str | None = None, d
     top, bot = max(14.0, min(top, 0.25 * H * px2pt)), max(14.0, min(bot, 0.2 * H * px2pt))
     col_h = H * px2pt - top - bot
 
-    # 4) 문서 만들기: 원본 단이 바뀌면 단 나누기, 문제 사이 빈칸은 원본 간격만큼
+    # 문서 만들기: 원본 단이 바뀌면 단 나누기, 문제 사이 빈칸은 원본 간격만큼
     items = []
     prev_key, prev_bottom = None, None
-    for (p, img, info), paras in zip(jobs, results):
+    for (p, info), paras in zip(jobs, results):
         if p.kind == "notice":
             b = p.blocks[0].box
             items.append({"notice": True, "lines": notice_paragraphs(p.blocks[0].text),
@@ -313,17 +351,8 @@ def convert(pdf_path: str, out_path: str, reader, *, pages: str | None = None, d
             items.append({"paras": hwp, "col_break": col_break, "space_pt": space if space > body_pt else 0})
         prev_key, prev_bottom = key, box[3]
 
-    say(base * 4 - 1, base * 4, "한글 파일 저장 중")
-    rep.counts = write_hwpx(out_path, items, page_w_pt=W * px2pt, page_h_pt=H * px2pt,
+    return write_hwpx(out_path, items, page_w_pt=W * px2pt, page_h_pt=H * px2pt,
                             margins_pt=(left, right, top, bot), cols=ncols, col_gap_pt=gap, body_pt=body_pt)
-    # 빠진 번호 경고 (1, 2, 4 → 3번 없음). 선택과목처럼 번호가 다시 작아지는 곳은 새 묶음으로 봄
-    nums = rep.problems
-    for a, b in zip(nums, nums[1:]):
-        if b > a + 1:
-            rep.warnings.append(f"{a}번과 {b}번 사이 문제를 찾지 못함")
-    rep.seconds = time.time() - t0
-    say(base * 4, base * 4, "완료")
-    return rep
 
 
 def default_reader():
@@ -346,10 +375,12 @@ if __name__ == "__main__":
     ap.add_argument("--pages", default="")
     ap.add_argument("--dpi", type=int, default=150)
     ap.add_argument("--debug", default="", help="문제 그림·인식 결과를 남길 폴더")
+    ap.add_argument("--no-work", action="store_true", help="작업 폴더(<이름>_작업)를 만들지 않음")
     a = ap.parse_args()
     out = a.out or os.path.splitext(a.pdf)[0] + ".hwpx"
     rd = default_reader()
     rep = convert(a.pdf, out, rd, pages=a.pages, dpi=a.dpi, letters=(True, False), debug_dir=a.debug or None,
+                  work_dir=None if a.no_work else os.path.splitext(out)[0] + "_작업",
                   progress=lambda d, t, m: print(f"[{d}/{t}] {m}", flush=True))
     print(rep.text())
     print("저장:", out)
