@@ -558,8 +558,11 @@ class PassageReader:
         return items
 
     # ------------------------------------------------------------ 전체
-    def __call__(self, img: Image.Image, figures: bool = True, letters=None):
-        """letters: (굵게, 기울임) 이면 지문 속 대문자(점 이름 등)를 모두 수식으로, 그 글꼴로 통일. None 이면 그대로"""
+    def __call__(self, img: Image.Image, figures: bool = True, letters=None, regions=None):
+        """letters: (굵게, 기울임) 이면 지문 속 대문자(점 이름 등)를 모두 수식으로, 그 글꼴로 통일. None 이면 그대로.
+        regions: 사용자가 정한 영역 [{"box": [x0, y0, x1, y1] (img 픽셀), "kind": "math"|"text"|"image"}].
+          image 는 그대로 그림으로, math 는 수식 인식기로만, text 는 글자 인식으로만 읽고 나머지는 자동.
+        읽은 뒤 self.last_regions 에 자동으로 나눈 수식·그림 영역(img 픽셀)을 남긴다 (확인 창에 보여 줌)."""
         img = img.convert("RGB")
         src = img
         self.notes = []  # 이번 인식에서 의심스러운 일 (PDF 변환 확인 창에 표시)
@@ -567,7 +570,20 @@ class PassageReader:
         if s > 1:
             img = img.resize((round(img.width * s), round(img.height * s)), Image.LANCZOS)
         t0 = time.time()
+        ureg = [{"box": [v * s for v in r["box"]], "kind": r["kind"]} for r in (regions or [])]
+        u_math = [r["box"] for r in ureg if r["kind"] == "math"]
+        u_text = [r["box"] for r in ureg if r["kind"] == "text"]
+        u_img = [r["box"] for r in ureg if r["kind"] == "image"]
         ws = self._words(img)
+        user_figs = []
+        if u_img:  # 사용자가 정한 그림 영역: 그대로 잘라 그림으로, 그 자리는 하얗게 지워 인식에서 뺌
+            u_img = [_clear_of_words(b, ws) for b in u_img]
+            img = img.copy(); d = ImageDraw.Draw(img)
+            for b in u_img:
+                d.rectangle(b, fill="white")
+                user_figs.append({"box": list(b), "kind": "image",
+                                  "val": Figure(src.crop(tuple(int(round(v / s)) for v in b)), "image", s)})
+            ws = [w for w in ws if not _center_in(w["box"], u_img)]
         # 그림·그래프·표: 원본에서 잘라 그림으로 넣고, 그 자리는 하얗게 지워 글자·수식 인식에서 뺀다
         fig_items = []
         if figures and self.figures is not None:
@@ -586,6 +602,7 @@ class PassageReader:
                         circ = []
                 figs = trim_text(figs, ws + circ, lh0)
                 figs = [dict(f, box=ink_box(img, f["box"])) for f in figs]  # 지우는 곳도 실제 그림까지만
+                figs = [f for f in figs if not _overlaps(f["box"], u_math + u_text + u_img)]  # 사용자 영역이 먼저
             except Exception:  # noqa: BLE001  그림 찾기가 실패해도 글자·수식은 읽음
                 figs = []
             if figs:
@@ -598,6 +615,7 @@ class PassageReader:
                 inside = lambda w: any(f["box"][0] <= (w["box"][0] + w["box"][2]) / 2 <= f["box"][2]  # noqa: E731
                                        and f["box"][1] <= (w["box"][1] + w["box"][3]) / 2 <= f["box"][3] for f in figs)
                 ws = [w for w in ws if not inside(w)]
+        fig_items = user_figs + fig_items
         hs = sorted(w["box"][3] - w["box"][1] for w in ws if HANGUL_RUN.search(w["val"]))
         lh = hs[len(hs) // 2] if hs else 30
         cws = sorted((w["box"][2] - w["box"][0]) / len(w["val"]) for w in ws
@@ -632,6 +650,8 @@ class PassageReader:
                 else:
                     cut += [t for t in (_ink_box(gray, p) for p in parts) if t]
             fboxes = cut
+        if u_math or u_text:  # 사용자가 수식/글로 정한 곳과 겹치는 자동 수식 영역은 버림
+            fboxes = [b for b in fboxes if not _overlaps(b, u_math + u_text)]
 
         boxes = []
         korean = []  # 한글 낱말 자리에서 나눈 수식 박스 조각 중 실은 한글 글자인 것 (첫 OCR 이 놓친 글자)
@@ -665,6 +685,8 @@ class PassageReader:
         self._trimmed = list(korean)  # 수식 박스 끝에서 잘라 낸 한글 글자 (자리, 글자)
         boxes = [self._trim_tall(img, self._trim_edges(img, b, cw), cw, ws) for b in boxes]
         boxes = [b for b in boxes if b[2] - b[0] > 4]
+        forced = [list(b) for b in u_math]
+        boxes += forced
         for comp in comps:
             for row in comp["rows"]:
                 row["maths"] = [t for t in (self._trim_edges(img, m, cw) for m in row["maths"]) if t[2] - t[0] > 4]
@@ -677,7 +699,7 @@ class PassageReader:
         items = [{"box": w["box"], "kind": "text", "val": w["val"]} for w in self._words(masked, text_pass=True)]
         # 수식 검출이 놓친 근호 수식('9√77' = 9√7/7 분수를 글자로 읽음): 그 자리를 수식 인식으로 다시 읽음
         # 수식 검출이 놓친 세로 분수(5/4 를 '15|4' 처럼 두 줄을 한 단어로 읽음): 글자 줄보다 훨씬 키 큰 숫자 단어도 다시 읽음
-        for it in [it for it in items if not HANGUL_RUN.search(it["val"]) and (
+        for it in [it for it in items if not HANGUL_RUN.search(it["val"]) and not _center_in(it["box"], u_text) and (
                 _MISSED_ROOT.search(it["val"]) or (it["box"][3] - it["box"][1] >= 1.3 * lh
                                                    and re.fullmatch(r"[-0-9a-zA-Z|/+.]{2,}", it["val"]) and re.search(r"\d", it["val"])))]:
             t = list(it["box"]); h = t[3] - t[1]
@@ -709,7 +731,7 @@ class PassageReader:
         for b, crop, latex in zip(boxes, crops, self.mfr(crops) if crops else []):
             latex, tail = split_tail(clean_latex(latex))
             latex = _array_to_frac(latex, np.asarray(crop.convert("L")), cw)
-            if _hallucinated(latex, b[2] - b[0], cw):
+            if _hallucinated(latex, b[2] - b[0], cw) and list(b) not in forced:
                 # 수식 인식기가 지어낸 결과(같은 조각 반복, \newcommand·\put 같은 수식 밖 명령): 글자 인식으로 대신 읽음
                 t, sc = self._rec_one(img, b)
                 self.notes.append("지어낸 수식을 글자로 바꿈")
@@ -752,6 +774,9 @@ class PassageReader:
                 latex = clean_latex(self.mfr([img.crop(tuple(int(v) for v in b))])[0])
             items.append({"box": b, "kind": "math", "val": latex})
         self.timing = (t1 - t0, t2 - t1, time.time() - t2)
+        self.last_regions = [{"box": [float(v) / s for v in it["box"]], "kind": "math"} for it in items if it["kind"] == "math"] + \
+            [{"box": [float(v) / s for v in f["box"]], "kind": "image"} for f in fig_items] + \
+            [{"box": [float(v) / s for v in r["box"]], "kind": "text"} for r in ureg if r["kind"] == "text"]
 
         lines = [(cy, unify_choices(single_letters(o_after_math(zero_to_o(fix_choices(segs))))))
                  for cy, segs in merge_lines(items, with_y=True)]
@@ -769,6 +794,39 @@ class PassageReader:
 
 
 _MISSED_ROOT = re.compile(r"√|\dV\d")
+
+
+def _clear_of_words(b, ws):
+    """사용자가 그린 그림 상자가 바깥 글줄에 살짝 걸치면(가운데가 상자 밖인 낱말) 그 낱말을 비켜 가도록 상자를 줄임"""
+    x0, y0, x1, y1 = b
+    for w in ws:
+        t = w["box"]
+        cx, cy = (t[0] + t[2]) / 2, (t[1] + t[3]) / 2
+        if x0 <= cx <= x1 and y0 <= cy <= y1:
+            continue
+        if t[2] <= x0 or t[0] >= x1 or t[3] <= y0 or t[1] >= y1:
+            continue
+        if cy < y0:
+            y0 = max(y0, t[3] + 1)
+        elif cy > y1:
+            y1 = min(y1, t[1] - 1)
+        elif cx < x0:
+            x0 = max(x0, t[2] + 1)
+        else:
+            x1 = min(x1, t[0] - 1)
+    return [x0, y0, x1, y1] if x1 - x0 > 4 and y1 - y0 > 4 else list(b)
+
+
+def _center_in(b, regs):
+    cx, cy = (b[0] + b[2]) / 2, (b[1] + b[3]) / 2
+    return any(r[0] <= cx <= r[2] and r[1] <= cy <= r[3] for r in regs)
+
+
+def _overlaps(b, regs, frac=0.3):
+    """b 넓이의 frac 이상이 regs 중 하나와 겹치면 True"""
+    a = max(1e-6, (b[2] - b[0]) * (b[3] - b[1]))
+    return any(max(0, min(b[2], r[2]) - max(b[0], r[0])) * max(0, min(b[3], r[3]) - max(b[1], r[1])) > frac * a
+               for r in regs)
 _LABELS = ["(가)", "(나)", "(다)", "(라)", "(마)"]
 _LABEL_HEAD = re.compile(r"^\s*\(\s*([^()\s]{1,3})\s*\)\s*")
 

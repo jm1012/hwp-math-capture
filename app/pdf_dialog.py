@@ -24,6 +24,7 @@ class LockedReader:
         with self.rec._lock:
             out = self.rec.passage(img, **kw)
             self.notes = list(getattr(self.rec.passage, "notes", []))
+            self.last_regions = list(getattr(self.rec.passage, "last_regions", []))
             return out
 
     def rec_image(self, img):

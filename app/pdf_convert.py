@@ -231,7 +231,7 @@ def convert(pdf_path: str, out_path: str, reader, *, pages: str | None = None, d
     # 2) 문제마다 인식
     results = []
     ems = []
-    flags, crops = [], {}
+    flags, crops, regions = [], {}, []
     from pdf_work import hangul_missing, problem_flags
     total = len(jobs)
     base = len(idx)
@@ -241,6 +241,7 @@ def convert(pdf_path: str, out_path: str, reader, *, pages: str | None = None, d
         if p.kind == "notice":
             results.append(None)
             flags.append([])
+            regions.append([])
             continue
         label = f"{p.page + 1}쪽 " + (f"{p.num}번" if p.num is not None else "(이어지는 내용)")
         say(base + 3 * base * k // total, base * 4, f"{label} 인식 중")
@@ -253,6 +254,7 @@ def convert(pdf_path: str, out_path: str, reader, *, pages: str | None = None, d
         if getattr(reader, "last_em", None):
             ems.append(reader.last_em)
         results.append(paras)
+        regions.append(list(getattr(reader, "last_regions", []) or []))
         miss = hangul_missing(page_words.get(p.page) or [], p.blocks, paras)
         flags.append(problem_flags(paras, getattr(reader, "notes", []), pim.size, miss))
         if work_dir:
@@ -274,7 +276,7 @@ def convert(pdf_path: str, out_path: str, reader, *, pages: str | None = None, d
         ids = {id(info): n for n, info in enumerate(page_info)}
         save(Work(dir=work_dir, pdf=pdf_path, out=out_path, dpi=dpi, figures=figures, letters=letters,
                   page_info=page_info, probs=[p for p, _, _ in jobs], pinfo=[ids[id(inf)] for _, _, inf in jobs],
-                  results=results, ems=ems, flags=flags, edited=[False] * len(jobs)), crops)
+                  results=results, ems=ems, flags=flags, edited=[False] * len(jobs), regions=regions), crops)
         rep.work_dir = work_dir
     rep.flagged = [(p.page + 1, p.num, f) for (p, _, _), f in zip(jobs, flags) if f]
 
