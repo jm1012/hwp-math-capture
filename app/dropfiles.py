@@ -1,6 +1,7 @@
 """창에 파일 끌어 놓기 (Windows 탐색기 → tkinter 창)
 
 tkinter 는 파일 끌어 놓기를 지원하지 않아, 창의 메시지 처리기를 바꿔 끼우고 WM_DROPFILES 를 받는다.
+메시지 처리기 안에서는 tkinter 를 부르지 않고(재진입하면 파이썬이 죽음) 경로만 모아 두고, after 폴링이 꺼내 넘긴다.
 새 의존성이 없다 (ctypes 로 user32·shell32 직접 호출). Windows 가 아니면 아무 일도 하지 않는다.
 """
 from __future__ import annotations
@@ -36,6 +37,18 @@ def enable(widget, on_files) -> bool:
         widget.update_idletasks()
         hwnd = widget.winfo_id()
         old = [None]
+        pending = []
+
+        def poll():
+            try:
+                while pending:
+                    on_files(pending.pop(0))
+            except Exception:  # noqa: BLE001
+                traceback.print_exc()
+            try:
+                widget.after(150, poll)
+            except Exception:  # 창이 닫힘
+                pass
 
         def proc(h, msg, wp, lp):
             if msg == WM_DROPFILES:
@@ -48,8 +61,8 @@ def enable(widget, on_files) -> bool:
                         files.append(buf.value)
                 finally:
                     sh.DragFinish(wp)
-                if files:
-                    widget.after(0, on_files, files)
+                if files:  # 여기서 tkinter 를 부르면 Tcl 재진입으로 파이썬이 죽음 → 목록에만 넣고 폴링이 꺼냄
+                    pending.append(files)
                 return 0
             return u32.CallWindowProcW(old[0], h, msg, wp, lp)
 
@@ -62,6 +75,7 @@ def enable(widget, on_files) -> bool:
         except Exception:
             pass
         sh.DragAcceptFiles(hwnd, True)
+        widget.after(150, poll)
         return True
     except Exception:  # noqa: BLE001  끌어 놓기가 안 돼도 프로그램은 돌아야 함
         traceback.print_exc()
