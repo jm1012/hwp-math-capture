@@ -5,6 +5,7 @@ python test_review_gui.py <작업 폴더> [화면 저장 폴더]
   3) 영역 다시 잡기 창(원래 자리) → 위쪽 절반만 잡아 다시 읽기  → 3_picker.png, 4_box.png
   4) 새 결과를 한글로 복사 → 클립보드에 한글 형식이 들어갔는지
   5) 이 결과로 바꾸기 → 한글 파일을 임시 이름으로 다시 저장        → 5_accept.png
+  6) 영역 나누기 창: AI 수식 영역 하나를 '글'로, 아래쪽 절반에 '그림' 영역을 그려 다시 읽기 → 6_regions.png, 7_regions_result.png
 원래 작업 폴더는 건드리지 않도록 복사본으로 시험한다.
 """
 import os
@@ -19,7 +20,7 @@ from PIL import ImageGrab
 import pdf_work as W
 from pdf_dialog import LockedReader
 from recognizer import Recognizer
-from review_dialog import BoxPicker, ReviewDialog
+from review_dialog import BoxPicker, RegionEditor, ReviewDialog
 
 src = sys.argv[1]
 shots = sys.argv[2] if len(sys.argv) > 2 else os.path.join(tempfile.gettempdir(), "review_shots")
@@ -122,9 +123,50 @@ def step3():
     dlg._rebuild()
     print("다시 저장:", dlg.msg.cget("text"), os.path.exists(w0.out))
     shot("5_accept.png")
-    print("PASS" if v.edited[k] and os.path.exists(w0.out) else "FAIL")
-    print("화면:", shots, log)
-    root.after(500, root.quit)
+    ok = v.edited[k] and os.path.exists(w0.out)
+    print("1~5:", "PASS" if ok else "FAIL")
+    step_regions()
+
+
+class Ev:
+    def __init__(self, x, y):
+        self.x, self.y = x, y
+
+
+def step_regions():
+    k = dlg.k
+    ai = [r for r in dlg.work.regions[k] if r["kind"] == "math"]
+    print("AI 영역:", len(dlg.work.regions[k]), "수식", len(ai))
+    got = []
+    ed = RegionEditor(dlg.win, dlg._crop, dlg.work.label(k), dlg.work.regions[k], dlg.work.user_regions[k], got.append)
+    s = ed.s
+    if ai:
+        b = ai[0]["box"]
+        cx, cy = (b[0] + b[2]) / 2 * s, (b[1] + b[3]) / 2 * s
+        ed.mode.set("text"); ed._down(Ev(cx, cy)); ed._up(Ev(cx, cy))
+    W_, H_ = dlg._crop.size
+    ed.mode.set("image"); ed._down(Ev(0.55 * W_ * s, 0.6 * H_ * s)); ed._move(Ev(0.95 * W_ * s, 0.95 * H_ * s))
+    ed._up(Ev(0.95 * W_ * s, 0.95 * H_ * s))
+    ed.win.update()
+    x, y = ed.win.winfo_rootx(), ed.win.winfo_rooty()
+    ImageGrab.grab(bbox=(x, y, x + ed.win.winfo_width(), y + ed.win.winfo_height()), all_screens=True).save(
+        os.path.join(shots, "6_regions.png"))
+    print("내 영역:", ed.user, "/", ed.info.cget("text"))
+    ed.on_ok = lambda regs: (got.append(regs), dlg._reread(regions=regs, what="정한 영역대로 다시 읽은 결과"))
+    ed._ok()
+
+    def done():
+        print("영역대로:", dlg.cand_text.get("1.0", "end")[:300].replace("\n", " / "), dlg.cand[1])
+        kinds = [r["kind"] for r in dlg.cand[4]]
+        print("새 영역 종류:", {t: kinds.count(t) for t in set(kinds)}, "사용자 영역 저장 예정:", dlg.cand[5])
+        shot("7_regions_result.png")
+        dlg._accept()
+        v = W.load(wd)
+        good = bool(v.user_regions[k]) and "image" in kinds
+        print("6:", "PASS" if good else "FAIL")
+        print("화면:", shots, log)
+        root.after(500, root.quit)
+    wait_cand(done)
 
 
 root.after(1500, step1)

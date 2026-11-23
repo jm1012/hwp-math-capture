@@ -80,8 +80,10 @@ class ReviewDialog:
         self.btn_copy.pack(side="left")
         self.btn_hi = tk.Button(bar, text="해상도 2배로 다시 읽기", font=F, command=lambda: self._reread(scale=2.0))
         self.btn_hi.pack(side="left", padx=6)
-        self.btn_box = tk.Button(bar, text="영역 다시 잡기…", font=F, command=self._pick_box)
+        self.btn_box = tk.Button(bar, text="문제 영역 다시 잡기…", font=F, command=self._pick_box)
         self.btn_box.pack(side="left")
+        self.btn_reg = tk.Button(bar, text="수식·글·그림 영역 나누기…", font=F, command=self._edit_regions)
+        self.btn_reg.pack(side="left", padx=6)
 
         self.cand_frame = tk.Frame(right, bg="white")
         self.cand_title = tk.Label(self.cand_frame, text="새 결과", font=("Malgun Gothic", 10, "bold"), bg="white",
@@ -176,7 +178,7 @@ class ReviewDialog:
         self.msg.config(text=text, fg=color)
 
     # ------------------------------------------------------------------ 다시 읽기
-    def _reread(self, scale=1.0, box=None, what=None):
+    def _reread(self, scale=1.0, box=None, what=None, regions=None):
         if self.k is None or self.busy:
             return
         if self.reader is None:
@@ -188,7 +190,7 @@ class ReviewDialog:
         k = self.k
         what = what or ("해상도 2배로 다시 읽은 결과" if scale != 1 else "다시 읽은 결과")
         self.busy = True
-        for b in (self.btn_hi, self.btn_box):
+        for b in (self.btn_hi, self.btn_box, self.btn_reg):
             b.config(state="disabled")
         self.say(f"{self.work.label(k)} 다시 읽는 중…")
 
@@ -196,8 +198,12 @@ class ReviewDialog:
             try:
                 if self.ready is not None:
                     self.ready.wait()
-                paras, fl, pim = W.reread(self.work, k, self.reader, box=box, scale=scale)
-                self.q.put(("cand", k, (paras, fl, pim, what)))
+                paras, fl, pim, regs = W.reread(self.work, k, self.reader, box=box, scale=scale, regions=regions)
+                if scale != 1:  # 확인 창의 문제 그림·영역은 변환 해상도 기준
+                    pim = pim.resize((round(pim.width / scale), round(pim.height / scale)), Image.LANCZOS)
+                # 문제 영역을 새로 잡으면 그림 자리가 바뀌므로 예전 사용자 영역은 버림
+                ureg = regions if regions is not None else ([] if box is not None else None)
+                self.q.put(("cand", k, (paras, fl, pim, what, regs, ureg)))
             except Exception as e:  # noqa: BLE001
                 traceback.print_exc()
                 self.q.put(("err", k, f"다시 읽지 못했습니다: {e}"))
@@ -209,7 +215,7 @@ class ReviewDialog:
             while True:
                 kind, k, val = self.q.get_nowait()
                 self.busy = False
-                for b in (self.btn_hi, self.btn_box):
+                for b in (self.btn_hi, self.btn_box, self.btn_reg):
                     b.config(state="normal")
                 if kind == "err":
                     self.say(val, "#d1242f")
@@ -227,7 +233,7 @@ class ReviewDialog:
 
     def _show_cand(self, cand):
         self.cand = cand
-        paras, fl, pim, what = cand
+        paras, fl, pim, what = cand[:4]
         self.cand_title.config(text=what)
         self.cand_reason.config(text=("확인할 점: " + ", ".join(fl)) if fl else "의심되는 곳 없음",
                                 fg="#d1242f" if fl else "#1a7f37")
@@ -241,10 +247,10 @@ class ReviewDialog:
     def _accept(self):
         if not self.cand or self.k is None:
             return
-        paras, fl, pim, _ = self.cand
+        paras, fl, pim, _, regs, ureg = self.cand
         k = self.k
         try:
-            W.replace(self.work, k, paras, fl)
+            W.replace(self.work, k, paras, fl, regions=regs, user_regions=ureg)
             pim.save(W.crop_path(self.work, k))
         except OSError as e:
             self.say(f"작업 파일을 저장하지 못했습니다: {e}", "#d1242f")
@@ -263,6 +269,17 @@ class ReviewDialog:
             self.say(f"원본 PDF 를 찾을 수 없습니다: {self.work.pdf}", "#d1242f")
             return
         BoxPicker(self.win, self.work, self.k, lambda box: self._reread(box=box, what="새 영역으로 다시 읽은 결과"))
+
+    def _edit_regions(self):
+        if self.k is None or self.busy or getattr(self, "_crop", None) is None:
+            return
+        if not os.path.isfile(self.work.pdf):
+            self.say(f"원본 PDF 를 찾을 수 없습니다: {self.work.pdf}", "#d1242f")
+            return
+        k = self.k
+        RegionEditor(self.win, self._crop, self.work.label(k), self.work.regions[k] if k < len(self.work.regions) else [],
+                     self.work.user_regions[k] if k < len(self.work.user_regions) else [],
+                     lambda regs: self._reread(regions=regs, what="정한 영역대로 다시 읽은 결과"))
 
     # ------------------------------------------------------------------ 복사·저장
     def _copy(self, cand: bool):
@@ -345,3 +362,121 @@ class BoxPicker:
             return
         self.win.destroy()
         self.on_box(box)
+
+
+KIND = {"math": ("수식", "#1f6feb"), "text": ("글", "#57606a"), "image": ("그림", "#1a7f37")}
+
+
+class RegionEditor:
+    """문제 그림 위에서 수식·글·그림 영역을 정함.
+    점선 = AI 가 나눈 영역, 실선 = 사용자가 정한 영역 (다시 읽을 때 이것을 따름).
+    종류를 고르고 드래그하면 새 영역. 점선 영역을 클릭하면 그 자리를 고른 종류로 정함. [지우기] 에서 실선을 클릭하면 지움."""
+
+    def __init__(self, parent, crop, title, ai_regions, user_regions, on_ok):
+        self.on_ok = on_ok
+        self.ai = [dict(r) for r in ai_regions]
+        self.user = [dict(r) for r in user_regions]
+        w = self.win = tk.Toplevel(parent)
+        w.title(f"영역 나누기 — {title}")
+        w.configure(bg="white", padx=8, pady=8)
+        w.transient(parent)
+        sw, sh = w.winfo_screenwidth(), w.winfo_screenheight()
+        self.s = min(2.0, (sw - 120) / crop.width, (sh - 260) / crop.height)
+        im = crop.resize((max(1, int(crop.width * self.s)), max(1, int(crop.height * self.s))), Image.LANCZOS)
+        self._img = ImageTk.PhotoImage(im)
+        top = tk.Frame(w, bg="white")
+        top.pack(fill="x")
+        self.mode = tk.StringVar(value="image")
+        for key, text in (("math", "수식"), ("text", "글"), ("image", "그림"), ("erase", "지우기")):
+            color = KIND[key][1] if key in KIND else "#d1242f"
+            tk.Radiobutton(top, text=text, value=key, variable=self.mode, font=F, bg="white", fg=color,
+                           selectcolor="white", indicatoron=False, width=6).pack(side="left", padx=2)
+        tk.Label(top, text="  종류를 고르고 드래그 → 새 영역 · 점선 클릭 → 그 영역을 고른 종류로 · [지우기]로 실선 클릭 → 지움",
+                 font=FS, bg="white", fg="#555").pack(side="left")
+        c = self.c = tk.Canvas(w, width=im.width, height=im.height, highlightthickness=0, cursor="crosshair")
+        c.pack(pady=(6, 0))
+        c.create_image(0, 0, image=self._img, anchor="nw")
+        c.bind("<ButtonPress-1>", self._down)
+        c.bind("<B1-Motion>", self._move)
+        c.bind("<ButtonRelease-1>", self._up)
+        bar = tk.Frame(w, bg="white")
+        bar.pack(fill="x", pady=(6, 0))
+        self.info = tk.Label(bar, text="", font=FS, bg="white", fg="#555")
+        self.info.pack(side="left")
+        tk.Button(bar, text="정한 영역대로 다시 읽기", font=F, command=self._ok).pack(side="right")
+        tk.Button(bar, text="취소", font=F, command=w.destroy).pack(side="right", padx=6)
+        tk.Button(bar, text="내 영역 모두 지우기", font=F, command=self._clear).pack(side="right")
+        self.drag = None
+        self._draw()
+        w.grab_set()
+
+    def _draw(self):
+        c = self.c
+        c.delete("reg")
+        for r in self.ai:
+            if any(_iou(r["box"], u["box"]) > 0.5 for u in self.user):
+                continue
+            name, col = KIND.get(r["kind"], ("?", "#999"))
+            c.create_rectangle(*[v * self.s for v in r["box"]], outline=col, width=1, dash=(4, 3), tags="reg")
+        for r in self.user:
+            name, col = KIND[r["kind"]]
+            x0, y0 = r["box"][0] * self.s, r["box"][1] * self.s
+            c.create_rectangle(*[v * self.s for v in r["box"]], outline=col, width=3, tags="reg")
+            c.create_text(x0 + 3, y0 + 2, text=name, anchor="nw", fill=col, font=("Malgun Gothic", 9, "bold"), tags="reg")
+        n = {k: sum(r["kind"] == k for r in self.user) for k in KIND}
+        self.info.config(text="내가 정한 영역: " + ", ".join(f"{KIND[k][0]} {v}개" for k, v in n.items() if v) if self.user
+                         else "내가 정한 영역 없음 (정하지 않은 곳은 자동)")
+
+    def _down(self, e):
+        self.drag = (e.x, e.y)
+        self.c.delete("drag")
+
+    def _move(self, e):
+        if not self.drag or self.mode.get() == "erase":
+            return
+        self.c.delete("drag")
+        col = KIND[self.mode.get()][1]
+        self.c.create_rectangle(self.drag[0], self.drag[1], e.x, e.y, outline=col, width=2, tags="drag")
+
+    def _up(self, e):
+        if not self.drag:
+            return
+        x0, y0 = self.drag
+        self.drag = None
+        self.c.delete("drag")
+        px, py = e.x / self.s, e.y / self.s
+        mode = self.mode.get()
+        if abs(e.x - x0) < 6 and abs(e.y - y0) < 6:  # 클릭
+            hit = lambda r: r["box"][0] <= px <= r["box"][2] and r["box"][1] <= py <= r["box"][3]  # noqa: E731
+            if mode == "erase":
+                self.user = [r for r in self.user if not hit(r)]
+            else:
+                cand = sorted((r for r in self.user + self.ai if hit(r)), key=lambda r: _area(r["box"]))
+                if cand:
+                    b = list(cand[0]["box"])
+                    self.user = [r for r in self.user if _iou(r["box"], b) <= 0.5] + [{"box": b, "kind": mode}]
+            self._draw()
+            return
+        if mode == "erase":
+            return
+        b = [min(x0, e.x) / self.s, min(y0, e.y) / self.s, max(x0, e.x) / self.s, max(y0, e.y) / self.s]
+        self.user.append({"box": [round(v, 1) for v in b], "kind": mode})
+        self._draw()
+
+    def _clear(self):
+        self.user = []
+        self._draw()
+
+    def _ok(self):
+        regs = [dict(r) for r in self.user]
+        self.win.destroy()
+        self.on_ok(regs)
+
+
+def _area(b):
+    return max(0, b[2] - b[0]) * max(0, b[3] - b[1])
+
+
+def _iou(a, b):
+    i = max(0, min(a[2], b[2]) - max(a[0], b[0])) * max(0, min(a[3], b[3]) - max(a[1], b[1]))
+    return i / max(1e-6, _area(a) + _area(b) - i)

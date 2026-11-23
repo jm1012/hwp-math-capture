@@ -41,6 +41,8 @@ class Work:
     ems: list = field(default_factory=list)
     flags: list = field(default_factory=list)       # 문제마다 의심 이유 목록
     edited: list = field(default_factory=list)      # 확인 창에서 결과를 바꾼 문제
+    regions: list = field(default_factory=list)     # 문제마다 영역 [{"box": 문제 그림 픽셀, "kind": math/text/image}]
+    user_regions: list = field(default_factory=list)  # 사용자가 정한 영역 (있으면 다시 읽을 때 씀)
 
     def label(self, k: int) -> str:
         p = self.probs[k]
@@ -156,6 +158,15 @@ def _paras_from_json(data, wdir):
     return out
 
 
+def _plain(o):
+    """numpy 숫자 등 → 파이썬 숫자"""
+    if hasattr(o, "item"):
+        return o.item()
+    if hasattr(o, "__float__"):
+        return float(o)
+    raise TypeError(type(o).__name__)
+
+
 def save(work: Work, crops=None):
     """work.json + 문제 그림(crops/) + 그림(figs/). crops: {문제 번호(k): 문제 그림} (처음 저장할 때)"""
     os.makedirs(os.path.join(work.dir, "figs"), exist_ok=True)
@@ -170,10 +181,11 @@ def save(work: Work, crops=None):
         "probs": [asdict(p) for p in work.probs], "pinfo": work.pinfo,
         "results": [_paras_to_json(r, k, figdir) for k, r in enumerate(work.results)],
         "ems": work.ems, "flags": work.flags, "edited": work.edited,
+        "regions": work.regions, "user_regions": work.user_regions,
     }
     tmp = os.path.join(work.dir, "work.json.tmp")
     with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False)
+        json.dump(data, f, ensure_ascii=False, default=_plain)
     os.replace(tmp, os.path.join(work.dir, "work.json"))
 
 
@@ -195,7 +207,9 @@ def load(wdir: str) -> Work:
     return Work(dir=wdir, pdf=d["pdf"], out=d["out"], dpi=d["dpi"], figures=d.get("figures", True),
                 letters=tuple(d["letters"]) if d.get("letters") else None, page_info=page_info, probs=probs,
                 pinfo=d["pinfo"], results=[_paras_from_json(r, wdir) for r in d["results"]], ems=d.get("ems", []),
-                flags=d.get("flags") or [[] for _ in range(n)], edited=d.get("edited") or [False] * n)
+                flags=d.get("flags") or [[] for _ in range(n)], edited=d.get("edited") or [False] * n,
+                regions=d.get("regions") or [[] for _ in range(n)],
+                user_regions=d.get("user_regions") or [[] for _ in range(n)])
 
 
 def crop_path(work: Work, k: int) -> str:
@@ -214,9 +228,10 @@ def page_image(work: Work, page: int, scale: float = 1.0) -> Image.Image:
             pass
 
 
-def reread(work: Work, k: int, reader, box=None, scale: float = 1.0):
+def reread(work: Work, k: int, reader, box=None, scale: float = 1.0, regions=None):
     """문제 k 를 다시 읽음. box: 쪽 그림(변환 해상도 기준) 위 새 영역 [x0, y0, x1, y1] (없으면 원래 자리).
-    scale: 해상도 배율 (2 = 두 배로 그려서 읽기). → (문단들, 의심 이유, 문제 그림)"""
+    scale: 해상도 배율 (2 = 두 배로 그려서 읽기). regions: 사용자가 정한 영역 (문제 그림 픽셀, box 없을 때만).
+    → (문단들, 의심 이유, 문제 그림, 이번에 나눈 영역(문제 그림 픽셀, 배율 1 기준))"""
     p = work.probs[k]
     info = work.page_info[work.pinfo[k]]
     img = page_image(work, p.page, scale)
@@ -233,8 +248,12 @@ def reread(work: Work, k: int, reader, box=None, scale: float = 1.0):
         nb = p.num_box
     q = L.Problem(p.num, p.page, p.col, blocks, num_box=sc(nb) if nb else None, kind=p.kind)
     pim = L.problem_image(img, q, info["lh"] * scale)
-    paras = reader(pim, figures=work.figures, letters=work.letters)
+    kw = {}
+    if regions and box is None:
+        kw["regions"] = [{"box": [v * scale for v in r["box"]], "kind": r["kind"]} for r in regions]
+    paras = reader(pim, figures=work.figures, letters=work.letters, **kw)
     notes = list(getattr(reader, "notes", []))
+    regs = [{"box": [v / scale for v in r["box"]], "kind": r["kind"]} for r in (getattr(reader, "last_regions", None) or [])]
     missing = 0
     if info.get("text"):
         try:
@@ -243,7 +262,7 @@ def reread(work: Work, k: int, reader, box=None, scale: float = 1.0):
             missing = hangul_missing(words, [L.Block(b) for b in ([box] if box else [b.box for b in p.blocks])], paras)
         except Exception:  # noqa: BLE001
             pass
-    return paras, problem_flags(paras, notes, pim.size, missing), pim
+    return paras, problem_flags(paras, notes, pim.size, missing), pim, regs
 
 
 def _overlap(a, b):
@@ -251,10 +270,14 @@ def _overlap(a, b):
     return a[0] < max(b[0], b[2]) and min(b[0], b[2]) < a[2] and a[1] < max(b[1], b[3]) and min(b[1], b[3]) < a[3]
 
 
-def replace(work: Work, k: int, paras, flags):
+def replace(work: Work, k: int, paras, flags, regions=None, user_regions=None):
     work.results[k] = paras
     work.flags[k] = flags
     work.edited[k] = True
+    if regions is not None:
+        work.regions[k] = regions
+    if user_regions is not None:
+        work.user_regions[k] = user_regions
     save(work)
 
 
