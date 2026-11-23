@@ -117,6 +117,24 @@ def _array_to_frac(latex, gray, cw):
 _WORD_FIX = [("수럼", "수렴"), ("최슷", "최솟"), ("최댄", "최댓"), ("슷자", "숫자")]
 
 
+_NOT_MATH = re.compile(r"\\(?:newcommand|renewcommand|def|put|line|multiput|qbezier|begin\s*\{\s*picture|usepackage|documentclass|"
+                       r"label|ref|cite|footnote|section|item|hline|includegraphics)\b")
+
+
+def _hallucinated(latex, width, cw):
+    """수식 인식 결과가 지어낸 것인가: 수식에 쓰지 않는 명령, 같은 조각의 반복('\\L \\L \\L …'),
+    그림 폭에 비해 터무니없이 긴 결과"""
+    if _NOT_MATH.search(latex):
+        return True
+    toks = [t for t in re.findall(r"\\[A-Za-z]+|\\.|[^\s{}]", latex) if t not in ("\\,", "\\;", "\\!", "\\ ", "\\:", "\\quad", "\\qquad")]
+    for n in (1, 2, 3, 4, 5, 6, 8, 10, 12):  # n 개 토큰 묶음이 연달아 5번 이상
+        for i in range(0, max(0, len(toks) - 5 * n + 1)):
+            seg = toks[i:i + n]
+            if all(toks[i + k * n:i + (k + 1) * n] == seg for k in range(1, 5)) and not all(re.fullmatch(r"[0-9.]", x) for x in seg):
+                return True
+    return len(toks) > 6 * max(1.0, width / max(cw, 1)) + 10
+
+
 def _attach_scripts(segs):
     """위·아래 첨자로 시작하는 수식('^2 g(c)')은 바로 앞 글자 조각('(ln 2)', 한글 없음)의 첨자: 그 조각을 수식 앞으로 옮김"""
     out = []
@@ -690,6 +708,12 @@ class PassageReader:
         for b, crop, latex in zip(boxes, crops, self.mfr(crops) if crops else []):
             latex, tail = split_tail(clean_latex(latex))
             latex = _array_to_frac(latex, np.asarray(crop.convert("L")), cw)
+            if _hallucinated(latex, b[2] - b[0], cw):
+                # 수식 인식기가 지어낸 결과(같은 조각 반복, \newcommand·\put 같은 수식 밖 명령): 글자 인식으로 대신 읽음
+                t, sc = self._rec_one(img, b)
+                if t.strip() and sc > 0.6:
+                    items.append({"box": list(b), "kind": "text", "val": t.strip()})
+                continue
             if b[2] - b[0] < 1.2 * cw and re.search(r"\\frac\s*\{\s*\}|\\frac\s*\{[^{}]*\}\s*\{\s*\}", latex):
                 continue  # 한 글자 폭 조각을 빈 분수로 읽음: 옆 한글 글자의 부스러기
             if not tail:  # "…… ⊙": 점선 뒤 동그라미 기호는 원문자 (원문자 검출이 놓친 경우)
