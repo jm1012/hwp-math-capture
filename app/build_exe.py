@@ -5,7 +5,7 @@ import os, shutil, subprocess, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 os.chdir(HERE)
-subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "pyinstaller", "pefile", "onnx"])
+subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "pyinstaller==6.22.3", "pefile", "onnx"])
 
 # 1) 모델 파일 (없으면 Hugging Face 에서 받음)
 import models
@@ -22,9 +22,42 @@ d.line((88, 160, 128, 96, 168, 160), fill="white", width=16)
 img.save("icon.ico", sizes=[(16, 16), (32, 32), (48, 48), (256, 256)])
 
 # 3) PyInstaller (폴더 형태: 시작이 빠름)
+# 3-1) 부트로더: PyInstaller 기본 부트로더는 백신 머신러닝 오탐(Behavior:Win32/DefenseEvasion.A!ml)이 잦아
+#      소스에서 직접 빌드한 것(bootloader/<버전>/, mingw-w64)을 빌드하는 동안만 바꿔 끼운다
+import PyInstaller
+BL_SRC = os.path.join(HERE, "bootloader", PyInstaller.__version__)
+BL_DST = os.path.join(os.path.dirname(PyInstaller.__file__), "bootloader", "Windows-64bit-intel")
+swapped = []
+if os.path.isdir(BL_SRC):
+    for n in ("run.exe", "runw.exe"):
+        src, dst = os.path.join(BL_SRC, n), os.path.join(BL_DST, n)
+        if os.path.exists(src) and os.path.exists(dst):
+            shutil.copy2(dst, dst + ".orig"); shutil.copy2(src, dst); swapped.append(dst)
+    print("직접 빌드한 부트로더 사용:", BL_SRC)
+else:
+    print("경고: 이 PyInstaller 버전용 부트로더가 없어 기본 부트로더를 씀 →", PyInstaller.__version__)
+
+# 3-2) 버전 정보 (파일 속성 > 자세히)
+VERSION = os.environ.get("APP_VERSION", "2.0.5")
+_v = tuple(int(x) for x in (VERSION.split(".") + ["0", "0", "0"])[:4])
+with open("version_info.txt", "w", encoding="utf-8") as f:
+    f.write(f"""VSVersionInfo(
+  ffi=FixedFileInfo(filevers={_v}, prodvers={_v}, mask=0x3f, flags=0x0, OS=0x40004, fileType=0x1, subtype=0x0, date=(0, 0)),
+  kids=[StringFileInfo([StringTable('041204B0', [
+    StringStruct('CompanyName', 'hwp-math-capture'),
+    StringStruct('FileDescription', '수식 캡처 (한글 수식 붙여넣기)'),
+    StringStruct('FileVersion', '{VERSION}'),
+    StringStruct('InternalName', 'hwp-math-capture'),
+    StringStruct('LegalCopyright', 'GPL-3.0, https://github.com/jm1012/hwp-math-capture'),
+    StringStruct('OriginalFilename', '수식캡처.exe'),
+    StringStruct('ProductName', 'hwp-math-capture'),
+    StringStruct('ProductVersion', '{VERSION}')])]),
+    VarFileInfo([VarStruct('Translation', [1042, 1200])])])
+""")
+
 args = [
     sys.executable, "-m", "PyInstaller", "app.py", "--name", "수식캡처", "--noconfirm", "--clean",
-    "--windowed", "--icon", "icon.ico",
+    "--windowed", "--icon", "icon.ico", "--version-file", "version_info.txt",
     "--collect-all", "rapidocr",            # 설정 yaml, 글꼴 등 데이터 파일 포함
     "--add-data", f"spacing_data{os.pathsep}spacing_data",   # 띄어쓰기 모델 (4.5MB)
     "--collect-binaries", "onnxruntime",
@@ -33,7 +66,11 @@ args = [
     "--copy-metadata", "numpy", "--copy-metadata", "pyyaml",
     "--exclude-module", "torch", "--exclude-module", "matplotlib", "--exclude-module", "onnx",
 ]
-subprocess.check_call(args)
+try:
+    subprocess.check_call(args)
+finally:
+    for dst in swapped:  # 바꿔 끼운 부트로더를 원래대로
+        shutil.move(dst + ".orig", dst)
 
 out = os.path.join("dist", "수식캡처")
 
