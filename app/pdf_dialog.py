@@ -18,10 +18,13 @@ class LockedReader:
 
     def __init__(self, rec):
         self.rec = rec
+        self.notes = []
 
     def __call__(self, img, **kw):
         with self.rec._lock:
-            return self.rec.passage(img, **kw)
+            out = self.rec.passage(img, **kw)
+            self.notes = list(getattr(self.rec.passage, "notes", []))
+            return out
 
     def rec_image(self, img):
         with self.rec._lock:
@@ -68,6 +71,11 @@ class PdfDialog:
         self.stop.pack(side="left", padx=6)
         self.open_btn = tk.Button(bar, text="결과 열기", font=f, width=9, command=self._open, state="disabled")
         self.open_btn.pack(side="left")
+        self.review_btn = tk.Button(bar, text="문제 확인", font=f, width=9, command=self._review, state="disabled")
+        self.review_btn.pack(side="left", padx=(6, 0))
+        tk.Button(w, text="예전 변환 결과 확인…", font=("Malgun Gothic", 9), command=self._open_work).grid(
+            row=6, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        self.work_dir = None
         w.protocol("WM_DELETE_WINDOW", self._close)
         import dropfiles
         if dropfiles.enable(w, self._dropped):
@@ -129,6 +137,7 @@ class PdfDialog:
         self.go.config(state="disabled")
         self.stop.config(state="normal")
         self.open_btn.config(state="disabled")
+        self.review_btn.config(state="disabled")
         self.bar["value"] = 0
         self._say("인식 모델 준비 중…")
         self.t0 = time.time()
@@ -137,6 +146,7 @@ class PdfDialog:
 
     def _run(self, pdf, out, pages):
         from pdf_convert import Cancelled, convert
+        from pdf_work import work_dir_for
         try:
             self.rec.ready.wait()
             if self.rec.error:
@@ -146,7 +156,8 @@ class PdfDialog:
                 if c.get("letters_unify", True) else None
             rep = convert(pdf, out, LockedReader(self.rec), pages=pages, dpi=int(c.get("pdf_dpi", 150)),
                           figures=bool(c.get("figures", True)), letters=letters,
-                          progress=lambda d, t, m: self.win.after(0, self._progress, d, t, m), cancel=self.cancel)
+                          progress=lambda d, t, m: self.win.after(0, self._progress, d, t, m), cancel=self.cancel,
+                          work_dir=work_dir_for(out))
             self.win.after(0, self._done, rep, out)
         except Cancelled:
             self.win.after(0, self._fail, "취소했습니다. 파일은 만들지 않았습니다.")
@@ -172,6 +183,9 @@ class PdfDialog:
         self.open_btn.config(state="normal")
         self.bar["value"] = 1000
         self.result = out
+        self.work_dir = getattr(rep, "work_dir", None)
+        if self.work_dir:
+            self.review_btn.config(state="normal")
         self._say("완료: " + rep.text(), "#1a7f37")
 
     def _fail(self, text):
@@ -190,6 +204,23 @@ class PdfDialog:
             os.startfile(self.result)  # noqa: S606  한글에서 열기
         except Exception as e:  # noqa: BLE001
             messagebox.showerror("PDF → 한글", f"파일을 열지 못했습니다: {e}", parent=self.win)
+
+    def _review(self, work_dir=None):
+        from review_dialog import ReviewDialog
+        wd = work_dir or self.work_dir
+        if not wd:
+            return
+        try:
+            ReviewDialog(self.win, wd, reader=LockedReader(self.rec), ready=self.rec.ready)
+        except Exception as e:  # noqa: BLE001
+            traceback.print_exc()
+            messagebox.showwarning("문제 확인", f"작업 파일을 열지 못했습니다: {e}", parent=self.win)
+
+    def _open_work(self):
+        p = filedialog.askopenfilename(parent=self.win, title="변환할 때 만든 '_작업' 폴더의 work.json 고르기",
+                                       filetypes=[("작업 파일", "work.json")])
+        if p:
+            self._review(os.path.dirname(p))
 
     def _close(self):
         if self.worker and self.worker.is_alive():

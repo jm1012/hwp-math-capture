@@ -562,6 +562,7 @@ class PassageReader:
         """letters: (굵게, 기울임) 이면 지문 속 대문자(점 이름 등)를 모두 수식으로, 그 글꼴로 통일. None 이면 그대로"""
         img = img.convert("RGB")
         src = img
+        self.notes = []  # 이번 인식에서 의심스러운 일 (PDF 변환 확인 창에 표시)
         s = max(1.0, self.scale_to / img.width)
         if s > 1:
             img = img.resize((round(img.width * s), round(img.height * s)), Image.LANCZOS)
@@ -711,6 +712,7 @@ class PassageReader:
             if _hallucinated(latex, b[2] - b[0], cw):
                 # 수식 인식기가 지어낸 결과(같은 조각 반복, \newcommand·\put 같은 수식 밖 명령): 글자 인식으로 대신 읽음
                 t, sc = self._rec_one(img, b)
+                self.notes.append("지어낸 수식을 글자로 바꿈")
                 if t.strip() and sc > 0.6:
                     items.append({"box": list(b), "kind": "text", "val": t.strip()})
                 continue
