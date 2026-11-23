@@ -4,8 +4,76 @@ import re
 
 CIRC = "①②③④⑤"
 
+def _split_top(s, sep):
+    """중괄호 바깥의 sep 로 나눔"""
+    out, depth, cur, i = [], 0, [], 0
+    while i < len(s):
+        if s.startswith(sep, i) and depth == 0:
+            out.append("".join(cur)); cur = []; i += len(sep); continue
+        c = s[i]
+        depth += {"{": 1, "}": -1}.get(c, 0)
+        cur.append(c); i += 1
+    out.append("".join(cur))
+    return out
+
+
+def _bare(cell):
+    """칸 내용에서 빈 묶음 { } 와 바깥 중괄호 한 겹을 걷어냄"""
+    c = re.sub(r"\{\s*\}", " ", cell).strip()
+    while c.startswith("{") and c.endswith("}") and _split_top(c[1:-1], "}") == [c[1:-1]] and c[1:-1].count("{") == c[1:-1].count("}"):
+        c = c[1:-1].strip()
+    return c
+
+
+_REL = re.compile(r"[<>=]|\\(?:leq?|geq?|leqq|geqq|leqslant|geqslant|neq?|ne|lt|gt|in|notin|text)\b|[가-힣]")
+
+
+def _cond_start(row):
+    """줄 끝까지 이어진 괄호 묶음(조건)의 시작 자리. 묶음 안에 부등호·등호·한글 등이 있어야 조건으로 봄"""
+    t = row.rstrip()
+    m = re.search(r"(\\right\s*\)|\))$", t)
+    if not m:
+        return None
+    depth, i = 0, len(t)
+    toks = list(re.finditer(r"\\left\s*\(|\\right\s*\)|\(|\)", t))
+    for tk in reversed(toks):
+        depth += 1 if tk.group(0).endswith(")") else -1
+        if depth == 0:
+            i = tk.start()
+            break
+    else:
+        return None
+    if i == 0 or not t[:i].strip() or not _REL.search(t[i:]):
+        return None
+    return i
+
+
+def tidy_cases(s: str) -> str:
+    """cases 줄마다 '값 & 조건' 두 칸으로 다시 나눔. 인식기가 칸 나눔(&)을 엉뚱한 곳에 넣는 일이 잦음
+    ('& -1 (a_n <= & -1)'). 이미 '값 & 조건' 두 칸이면 그대로. 조건 = 줄 끝까지 이어진 괄호 묶음 (안에 부등호 등)"""
+    def fix(m):
+        rows = [r for r in _split_top(m.group(1), "\\\\") if r.strip()]
+        out, changed = [], False
+        for r in rows:
+            cells = [_bare(c) for c in _split_top(r, "&")]
+            if len(cells) == 2 and all(cells):
+                out.append(cells[0] + " & " + cells[1]); continue
+            joined = " ".join(c for c in cells if c)
+            k = _cond_start(joined)
+            if k is None:
+                return m.group(0)
+            out.append(joined[:k].strip() + " & " + joined[k:].strip()); changed = True
+        if not changed:
+            return m.group(0)
+        return "\\begin{cases} " + " \\\\ ".join(out) + " \\end{cases}"
+    return re.sub(r"\\begin\{cases\}(.*?)\\end\{cases\}", fix, s, flags=re.S)
+
+
 def clean_latex(s: str) -> str:
     s = s.strip()
+    # g^{\ddot{\phantom{a}}} -> g'' : 빈 글자 위의 점 두 개/한 개는 프라임 ('' / ')
+    s = re.sub(r"\^\s*\{\s*\\ddot\s*\{\s*(?:\\phantom\s*\{[^{}]*\}\s*)?\}\s*\}", "''", s)
+    s = re.sub(r"\^\s*\{\s*\\dot\s*\{\s*(?:\\phantom\s*\{[^{}]*\}\s*)?\}\s*\}", "'", s)
     # 괄호 없는 분수: \frac 12 -> \frac{1}{2}, \frac 1{x} -> \frac{1}{x} (그대로 두면 분모가 빠짐)
     s = re.sub(r"\\([dtc]?frac)\s*([0-9A-Za-z])\s*([0-9A-Za-z])", r"\\\1{\2}{\3}", s)
     s = re.sub(r"\\([dtc]?frac)\s*([0-9A-Za-z])\s*(?=\{)", r"\\\1{\2}", s)
@@ -36,6 +104,7 @@ def clean_latex(s: str) -> str:
     s = re.sub(r"\s*[\^_]\s*\{\s*\}", "", s)
     # 글꼴 묶음 맨 앞의 공백: \mathrm { ~ A } -> \mathrm { A }
     s = re.sub(r"(\\(?:mathrm|textrm|mathit|mathbf|mathsf|operatorname)\s*\{)(?:\s|~|\\[,;:! ])+", r"\1", s)
+    s = tidy_cases(s)
     return s.strip()
 
 def fix_choices(segs):
@@ -194,7 +263,7 @@ def normalize_p2t(s: str) -> str:
 
 
 # 수식 끝에 '이'가 기호처럼 잘못 붙어 나오는 흔한 모양 (o| , ∘[ , Φ| …)
-_TAIL_I = re.compile(r"\s*(?:\\circ|\\Phi|\\phi|o|0|\\diamond)\s*(?:\\!\s*)?(?:\^\s*\{[^{}]*\}\s*)?(?:[\[\]|]|\\rceil|\\rfloor)\s*$")
+_TAIL_I = re.compile(r"\s*(?:\\circ|\\Phi|\\phi|o|0|\\diamond)\s*(?:\\[,;:! ]\s*)*(?:\^\s*\{[^{}]*\}\s*)?(?:[\[\]|]|\\rceil|\\rfloor)\s*$")
 
 
 def split_tail(latex: str) -> tuple[str, str]:
@@ -395,7 +464,9 @@ def _choice_tokens(segs):
     toks, space = [], True
     for k, v in segs:
         if k == "math":
-            parts = [p for p in re.split(r"\s*(?:\\[ ,;:!]\s*)*\\(?:oplus|bigoplus)\s*", v) if p.strip()]
+            # 수식 속 ⊕, \textcircled{…} 는 선지 번호(②)를 수식으로 잘못 읽은 것
+            parts = [p for p in re.split(r"\s*(?:\\[ ,;:!]\s*)*\\(?:oplus|bigoplus)\s*", _circled_to_oplus(v))
+                     if p.strip() and not re.fullmatch(r"(?:\s|\\[ ,;:!])*", p)]
             for i, p in enumerate(parts):  # 수식 속 ⊕ 는 ② 를 잘못 읽은 것
                 if i:
                     toks.append(("mark", "⊕", True))
@@ -410,6 +481,27 @@ def _choice_tokens(segs):
             toks.append(("mark" if t in CIRC else "text", t, space))
             space = False
     return toks
+
+
+def _circled_to_oplus(v):
+    """\\textcircled{…} (중괄호 겹침 포함) 를 \\oplus 로 (선지 번호 자리 표시)"""
+    out, k = [], 0
+    for m in re.finditer(r"\\textcircled\s*", v):
+        if m.start() < k:
+            continue
+        e = m.end()
+        if e < len(v) and v[e] == "{":
+            depth = 0
+            for q in range(e, len(v)):
+                depth += {"{": 1, "}": -1}.get(v[q], 0)
+                if depth == 0:
+                    e = q + 1
+                    break
+        elif e < len(v):
+            e += 1
+        out.append(v[k:m.start()] + " \\oplus ")
+        k = e
+    return "".join(out) + v[k:]
 
 
 def fix_choice_numbers(lines):
@@ -432,6 +524,10 @@ def fix_choice_numbers(lines):
             if kind == "text" and at_start and nxt is not None and nxt[0] != "mark":
                 if re.fullmatch(r"[1-5]", val) and int(val) > last:
                     cur = [li, int(val), []]; entries.append(cur)
+                    continue
+                m = re.fullmatch(r"\(?([1-5])[)\]]", val)  # '2)' '(2)': 동그라미를 괄호로 읽음 (값에는 이런 꼴이 없음)
+                if m and int(m.group(1)) == last + 1:
+                    cur = [li, int(m.group(1)), []]; entries.append(cur)
                     continue
                 if val in _PUNCT_MARK and cur is None:
                     cur = [li, None, []]; entries.append(cur)
@@ -460,6 +556,8 @@ def fix_choice_numbers(lines):
     # 번호 매기기: 차례에 안 맞는 번호는 버리고, 빈 번호는 앞 번호 + 1 (다음 번호와 겹치면 포기)
     filled = False
     nums, prev = [], 0
+    if len(entries) == 5 and sum(1 for e in entries if e[1] is not None) >= 3:
+        entries = [[li, None, v] for li, _, v in entries]  # 선지 다섯 개가 다 있으면 번호는 ①~⑤ 차례 (③③ 처럼 잘못 읽은 번호)
     for li, n, _ in entries:
         if n is not None and n <= prev:
             n = None

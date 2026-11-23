@@ -11,7 +11,6 @@ import itertools
 import json
 import time
 
-import win32clipboard as cb
 
 # Captured from Hangul 11.0.0.1623 (equation copy) with the preview PNG (pi/bi/bidt) removed.
 # The equation script sits at cs/<id>/eq/sc and is the placeholder "__SCRIPT__".
@@ -163,6 +162,7 @@ def _wrap_html(jb: bytes) -> bytes:
 
 
 def _open_clipboard(retries: int = 50, delay: float = 0.02):
+    import win32clipboard as cb
     for i in range(retries):
         try:
             cb.OpenClipboard()
@@ -184,6 +184,7 @@ def set_passage_clipboard(paras, plain_text: "str | None" = None) -> None:
 
 
 def _set_html(data: bytes, plain_text: "str | None") -> None:
+    import win32clipboard as cb
     fmt = cb.RegisterClipboardFormat("HTML Format")
     _open_clipboard()
     try:

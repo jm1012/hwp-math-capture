@@ -160,6 +160,8 @@ class App:
                   command=lambda: self.events.put(("hotkey_dialog", "formula"))).pack(side="left")
         tk.Button(bar2, text="지문 단축키 변경", font=("Malgun Gothic", 9),
                   command=lambda: self.events.put(("hotkey_dialog", "passage"))).pack(side="left", padx=6)
+        tk.Button(bar2, text="PDF → 한글 파일", font=("Malgun Gothic", 9),
+                  command=lambda: self.events.put("pdf_dialog")).pack(side="right")
         r.protocol("WM_DELETE_WINDOW", lambda: self.events.put("quit"))
         self._refresh_hotkey_label()
         r.update_idletasks()
@@ -198,6 +200,7 @@ class App:
                                  lambda: self.events.put(("capture", "formula")), default=True),
                 pystray.MenuItem(lambda item: f"지문 캡처 ({pretty(self.cfg['passage_hotkey'])})",
                                  lambda: self.events.put(("capture", "passage"))),
+                pystray.MenuItem("PDF → 한글 파일 변환…", lambda: self.events.put("pdf_dialog")),
                 pystray.MenuItem("수식 단축키 변경…", lambda: self.events.put(("hotkey_dialog", "formula"))),
                 pystray.MenuItem("지문 단축키 변경…", lambda: self.events.put(("hotkey_dialog", "passage"))),
                 pystray.MenuItem("지문 속 그림·표도 넣기", lambda: self.events.put("toggle_figures"),
@@ -226,6 +229,8 @@ class App:
                         self.capture(ev[1])
                 elif kind == "hotkey_dialog":
                     self.open_hotkey_dialog(ev[1])
+                elif ev == "pdf_dialog":
+                    self.open_pdf_dialog()
                 elif ev == "ready":
                     self._set_status("준비 완료", "#1a7f37")
                     self.toast.show("수식 캡처 준비 완료",
@@ -283,6 +288,14 @@ class App:
     def _hk(self, mode="formula"):
         from hotkey import pretty
         return pretty(self.cfg[MODES[mode][0]])
+
+    def open_pdf_dialog(self):
+        from pdf_dialog import PdfDialog
+        if getattr(self, "_pdf", None) and self._pdf.win.winfo_exists():
+            self._pdf.win.deiconify()
+            self._pdf.win.lift()
+            return
+        self._pdf = PdfDialog(self.root, self.rec, self.cfg)
 
     def open_hotkey_dialog(self, mode="formula"):
         from hotkey import HotkeyDialog

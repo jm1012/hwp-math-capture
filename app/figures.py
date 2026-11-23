@@ -69,6 +69,8 @@ class FigureDetector:
                  min(float(h), float(row[5]))]
             if LABELS[cls] != "table":
                 b = _cut_edge_lines(b, lines)
+            elif is_text_box(img, b):  # 칸 없는 글 상자는 글자로 읽음
+                continue
             if b[2] - b[0] < 8 or b[3] - b[1] < 8:
                 continue
             cand.append({"box": b, "kind": LABELS[cls], "score": sc})
@@ -85,23 +87,55 @@ class FigureDetector:
 _CHOICE = "①②③④⑤"
 
 
+def is_text_box(img: Image.Image, box) -> bool:
+    """'표'로 찾은 영역이 칸 나눔 없는 글 상자(조건 (가)(나) 상자, 〈보기〉 상자)인지: 테두리 안쪽에 긴 가로·세로줄이 없으면 True.
+    이런 상자는 그림으로 넣지 않고 안의 글자·수식을 읽는다."""
+    x0, y0, x1, y1 = (int(round(v)) for v in box)
+    g = np.asarray(img.convert("L"))[max(0, y0):y1, max(0, x0):x1] < 160
+    h, w = g.shape
+    if h < 20 or w < 20:
+        return False
+    m = max(4, int(0.04 * min(h, w)))  # 테두리 선 두께 + 여유
+    inner = g[m:h - m, m:w - m]
+    if not inner.size:
+        return False
+    rows = inner.mean(axis=1)
+    cols = inner.mean(axis=0)
+    return not (rows > 0.6).any() and not (cols > 0.6).any()
+
+
 def _is_body_text(val: str) -> bool:
-    """그림 상자 안에서 그림이 아니라 본문으로 볼 글자: 선지 번호 ①~⑤.
-    (한글 글자는 기준으로 쓰지 않음: 동전 그림의 '한국은행', '1번째 자리' 같은 그림 속 글자가 있음)"""
-    return any(c in val for c in _CHOICE)
+    """그림 상자 안에서 그림이 아니라 본문으로 볼 글자: 선지 번호 ①~⑤, 문장 끝('구하시오.', '값은?')·배점([4점]).
+    (한글이 있다는 것만으로는 기준으로 쓰지 않음: 동전 그림의 '한국은행', '1번째 자리' 같은 그림 속 글자가 있음)"""
+    return any(c in val for c in _CHOICE) or bool(_SENTENCE.search(val))
+
+
+# 문제 글(문장 끝, 배점): 그림 속 이름표('한국은행', 'A지점')와 달리 그림 안에 있을 수 없음
+import re as _re  # noqa: E402
+_SENTENCE = _re.compile(r"(시오|하라|은\?|는\?|가\?|이다|하자|한다|였다|\[\s*\d+(?:\.\d+)?\s*점\s*\])[.?]?$")
 
 
 def trim_text(figs, words, lh):
     """그림 상자가 선지 줄까지 품고 있으면 그 줄을 빼고 위나 아래 큰 쪽만 남긴다.
     남는 쪽이 너무 작으면 그 그림은 버린다. figs: FigureDetector 결과, words: [{"box", "val"}] (OCR 단어)"""
+    import re
     out = []
     for f in figs:
         b = list(f["box"])
+        # 본문 글이 잔뜩 든 큰 '표'(문제 전체를 표로 잡은 경우, 스캔본 사설 30번): 그림이 아님
+        n_ko = sum(len(re.findall(r"[가-힣]", w["val"])) for w in words
+                   if b[0] <= (w["box"][0] + w["box"][2]) / 2 <= b[2] and b[1] <= (w["box"][1] + w["box"][3]) / 2 <= b[3])
+        if f.get("kind") == "table" and n_ko >= 40:
+            continue
         inner = [w["box"] for w in words if _is_body_text(w["val"])
                  and b[0] <= (w["box"][0] + w["box"][2]) / 2 <= b[2] and b[1] <= (w["box"][1] + w["box"][3]) / 2 <= b[3]]
         if inner:
-            top = [b[0], b[1], b[2], min(t[1] for t in inner) - 2]
-            bot = [b[0], max(t[3] for t in inner) + 2, b[2], b[3]]
+            # 선지 줄 전체 (분수 선지의 분모처럼 번호보다 아래·위로 나온 글자까지)
+            a0, a1 = min(t[1] for t in inner), max(t[3] for t in inner)
+            row = [w["box"] for w in words if w["box"][1] < a1 and w["box"][3] > a0
+                   and b[0] <= (w["box"][0] + w["box"][2]) / 2 <= b[2]]
+            top = [b[0], b[1], b[2], min([a0] + [t[1] for t in row]) - 2]
+            bot = [b[0], max([a1] + [t[3] for t in row]) + 2, b[2], b[3]]
             keep = max((top, bot), key=lambda t: t[3] - t[1])
             if keep[3] - keep[1] < max(3 * lh, 0.3 * (b[3] - b[1])):
                 continue

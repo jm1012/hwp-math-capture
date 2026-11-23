@@ -59,6 +59,124 @@ def _ink_box(gray, b, th=160, pad=2):
             max(0, y0) + ys.max() + pad + 1]
 
 
+def _split_at_rules(boxes, gray, lh):
+    """수식 박스를 가로지르는 긴 가로줄(조건 상자 테두리 등: 박스 양옆 밖까지 이어짐)에서 위아래로 나눔.
+    분수 막대는 박스 밖으로 나가지 않으므로 건드리지 않음"""
+    H, W = gray.shape
+    out = []
+    for b in boxes:
+        x0, y0, x1, y1 = (int(round(v)) for v in b)
+        ext = max(4, int(0.6 * lh))
+        if y1 - y0 < 1.5 * lh or x0 - ext < 0 or x1 + ext > W:
+            out.append(b); continue
+        rows = (gray[max(0, y0):min(H, y1), x0 - ext:x1 + ext] < 160).mean(axis=1)
+        cut = [y0 + i for i, r in enumerate(rows) if r > 0.97 and 0.3 * lh < i < (y1 - y0) - 0.3 * lh]
+        if not cut:
+            out.append(b); continue
+        a, c = min(cut), max(cut)
+        for part in ([x0, y0, x1, a - 1], [x0, c + 2, x1, y1]):
+            t = _ink_box(gray, part)
+            if t and t[3] - t[1] > 0.3 * lh:
+                out.append(t)
+    return out
+
+
+_ARRAY2 = re.compile(r"\\begin\{(?:array\}\s*\{\s*c\s*\}|matrix\}|smallmatrix\})\s*"
+                     r"((?:[^{}\\&]|\\[A-Za-z]+|\\[^\\]|\{(?:[^{}]|\{[^{}]*\})*\})+?)\s*\\\\\s*"
+                     r"((?:[^{}\\&]|\\[A-Za-z]+|\\[^\\]|\{(?:[^{}]|\{[^{}]*\})*\})+?)\s*(?:\\\\\s*)?\\end\{(?:array|matrix|smallmatrix)\}")
+
+
+def _has_bar(gray, cw):
+    """그림에 분수 막대(위아래가 빈 짧은 가로줄)가 있나"""
+    ink = gray < 160
+    H, W = ink.shape
+    for y in range(2, H - 2):
+        row = ink[y]
+        d = np.diff(np.concatenate([[0], row.astype(np.int8), [0]]))
+        for a, e in zip(np.nonzero(d == 1)[0], np.nonzero(d == -1)[0]):
+            if e - a >= 1.2 * cw and not ink[max(0, y - 3), a:e].all() and not ink[min(H - 1, y + 3), a:e].all() \
+                    and ink[max(0, y - 2):y + 3, a:e].sum(axis=0).max() <= 4:
+                return True
+    return False
+
+
+def _array_to_frac(latex, gray, cw):
+    """한 칸짜리 두 줄 배열(array{c}, matrix)은 분수 막대를 놓친 분수인 경우가 많음: 그림에 분수 막대가 있으면 \\frac 로.
+    (막대가 없으면 진짜 배열·이항계수일 수 있으므로 그대로)"""
+    if "&" in latex or not _ARRAY2.search(latex):
+        return latex
+    try:
+        if not _has_bar(gray, cw):
+            return latex
+    except Exception:  # noqa: BLE001
+        return latex
+    return _ARRAY2.sub(lambda m: "\\frac{" + m.group(1).strip() + "}{" + m.group(2).strip() + "}", latex, count=1)
+
+
+# 수학 시험지에 자주 나오는 낱말을 OCR 이 비슷한 글자로 잘못 읽은 것 (받침·모음 하나 차이)
+_WORD_FIX = [("수럼", "수렴"), ("최슷", "최솟"), ("최댄", "최댓"), ("슷자", "숫자")]
+
+
+_NOT_MATH = re.compile(r"\\(?:newcommand|renewcommand|def|put|line|multiput|qbezier|begin\s*\{\s*picture|usepackage|documentclass|"
+                       r"label|ref|cite|footnote|section|item|hline|includegraphics)\b")
+
+
+def _hallucinated(latex, width, cw):
+    """수식 인식 결과가 지어낸 것인가: 수식에 쓰지 않는 명령, 같은 조각의 반복('\\L \\L \\L …'),
+    그림 폭에 비해 터무니없이 긴 결과"""
+    if _NOT_MATH.search(latex):
+        return True
+    toks = [t for t in re.findall(r"\\[A-Za-z]+|\\.|[^\s{}]", latex) if t not in ("\\,", "\\;", "\\!", "\\ ", "\\:", "\\quad", "\\qquad")]
+    for n in (1, 2, 3, 4, 5, 6, 8, 10, 12):  # n 개 토큰 묶음이 연달아 5번 이상
+        for i in range(0, max(0, len(toks) - 5 * n + 1)):
+            seg = toks[i:i + n]
+            if all(toks[i + k * n:i + (k + 1) * n] == seg for k in range(1, 5)) and not all(re.fullmatch(r"[0-9.]", x) for x in seg):
+                return True
+    return len(toks) > 6 * max(1.0, width / max(cw, 1)) + 10
+
+
+def _attach_scripts(segs):
+    """위·아래 첨자로 시작하는 수식('^2 g(c)')은 바로 앞 글자 조각('(ln 2)', 한글 없음)의 첨자: 그 조각을 수식 앞으로 옮김"""
+    out = []
+    for k, v in segs:
+        if k == "math" and re.match(r"\s*[\^_]", v) and out and out[-1][0] == "text":
+            m = re.search(r"(\([^()가-힣]{1,12}\)|[A-Za-z0-9]{1,6})$", out[-1][1].rstrip())
+            if m and out[-1][1].rstrip() == out[-1][1].rstrip()[:m.start()] + m.group(1):
+                tok = m.group(1)
+                rest = out[-1][1].rstrip()[:m.start()]
+                tok = re.sub(r"\bln\b", r"\\ln", tok)
+                out[-1] = ("text", rest)
+                if not rest:
+                    out.pop()
+                v = tok + " " + v.lstrip()
+        out.append((k, v))
+    return out
+
+
+def _fix_words(v):
+    for a, b in _WORD_FIX:
+        if a in v:
+            v = v.replace(a, b)
+    return v
+
+
+def _rule_rows(gray, width, frac=0.4):
+    """그림을 가로지르는 긴 가로줄(상자 테두리)의 y 들. 줄마다 가장 긴 잉크 줄기가 폭의 frac 이상"""
+    ink = gray < 160
+    cand = np.nonzero(ink.mean(axis=1) >= frac)[0]
+    out = []
+    for y in cand.tolist():
+        row = ink[y]
+        d = np.diff(np.concatenate([[0], row.astype(np.int8), [0]]))
+        st, en = np.nonzero(d == 1)[0], np.nonzero(d == -1)[0]
+        if len(st) and (en - st).max() >= frac * width:
+            if out and y - out[-1][1] <= 2:
+                out[-1][1] = y
+            else:
+                out.append([y, y])
+    return [(a + b) / 2 for a, b in out]
+
+
 def _cut_marks(b, marks):
     """수식 박스가 보기 번호 동그라미를 품고 있으면 동그라미 자리에서 잘라 여러 박스로 나눈다.
     (보기 줄 전체, 또는 두 줄짜리 보기를 수식 하나로 잡은 경우). 결과: 박스 목록"""
@@ -122,6 +240,13 @@ class PassageReader:
                 out.append({"box": [min(xs), min(ys), max(xs), max(ys)], "val": txt})
         return out
 
+    def rec_image(self, crop):
+        """작은 그림 한 줄을 글자 인식만 (검출 없이) → (글자, 점수)"""
+        if self.ocr.text_rec is None:
+            self.ocr._load_rec_model()
+        r = self.ocr.text_rec(self._TextRecInput(img=[np.asarray(crop.convert("RGB"))[:, :, ::-1]]))
+        return (r.txts[0].strip(), float(r.scores[0])) if r.txts else ("", 0.0)
+
     def _rec_one(self, img, box):
         crop = img.crop(tuple(int(v) for v in box))
         r = self.ocr.text_rec(self._TextRecInput(img=[np.asarray(crop)[:, :, ::-1]]))
@@ -143,8 +268,8 @@ class PassageReader:
         v = w["val"]; x0, y0, x1, y1 = w["box"]
         if not HANGUL_RUN.search(v):
             return []
-        if HANGUL_RUN.fullmatch(v):
-            return [(x0, x1, y0, y1)]
+        if HANGUL_RUN.fullmatch(v) or re.fullmatch(r"[(\[<〈]\s*[가-힣]{1,2}\s*[)\]>〉]", v):
+            return [(x0, x1, y0, y1)]  # 한글 낱말, 조건 머리 "(가)" 는 괄호까지 글자
         out = []
         for m in HANGUL_RUN.finditer(v):
             n = m.end() - m.start()
@@ -225,6 +350,43 @@ class PassageReader:
             else:
                 b[0] = max(b[0], band[0])
         return b
+
+    def _korean_piece(self, img, b):
+        """한글 자리에서 나눈 수식 박스 조각이 실은 한글 글(첫 OCR 이 놓침)이면 그 글, 아니면 None.
+        스캔본에서 '값을 구하시오. [3점]' 전체를 수식으로 잡고 한글 일부만 OCR 된 경우"""
+        t, sc = self._rec_one(img, b)
+        t = t.strip()
+        if sc < 0.8 or not t or not HANGUL_RUN.search(t):
+            return None
+        rest = re.sub(r"\[\s*\d+(?:\.\d+)?\s*점\s*\]|[가-힣\s.,?!()\[\]]", "", t)
+        return t if not rest else None
+
+    def _split_tall_at_hangul(self, b, ws, cw, gray):
+        """키 큰 수식 박스(분수·지수 등) 가운데에 한글 낱말이 끼어 있으면("f(x)=(1/5)^x 이고 f(f(x))=3x")
+        그 낱말 자리에서 나눈다. 수식 인식기는 한글을 못 읽어 쓰레기 기호가 됨.
+        낱말 세로 띠의 위·아래가 비어 있을 때만 (분수 막대 등이 지나가면 수식 일부이므로 안 나눔)"""
+        spans = sorted(sp for w in ws for sp in self._hangul_spans(w, cw)
+                       if b[0] < (sp[0] + sp[1]) / 2 < b[2] and b[1] <= (sp[2] + sp[3]) / 2 <= b[3])
+        H, W = gray.shape
+        y0, y1 = max(0, int(b[1])), min(H, int(b[3]))
+        out, x = [], b[0]
+        for s0, s1, t0, t1 in spans:
+            if s0 - b[0] < 0.5 * cw or b[2] - s1 < 0.5 * cw:  # 박스 끝에 붙은 글자는 _trim_edges 몫
+                continue
+            col = gray[y0:y1, max(0, int(s0)):min(W, int(s1))] < 160
+            band = np.zeros(col.shape[0], bool)
+            band[max(0, int(t0) - y0 - 2):max(0, int(t1) - y0 + 3)] = True
+            if col[~band].sum() > 0.02 * col.size:
+                continue
+            if s0 - x > 0.3 * cw:
+                t = _ink_box(gray, [x, b[1], s0, b[3]])
+                if t:
+                    out.append(t)
+            x = max(x, s1)
+        if not out:
+            return [b]
+        t = _ink_box(gray, [x, b[1], b[2], b[3]])
+        return out + ([t] if t else [])
 
     def _split_cases(self, b, ws, cw, lh, gray):
         """여러 줄 수식(구간별 함수 등)의 조건 칸에 한글이 있으면 줄별로 나눈다.
@@ -411,7 +573,17 @@ class PassageReader:
             from figures import crop_figure, ink_box, trim_text
             try:
                 hs0 = sorted(w["box"][3] - w["box"][1] for w in ws if HANGUL_RUN.search(w["val"]))
-                figs = trim_text(self.figures(img), ws, hs0[len(hs0) // 2] if hs0 else 30)
+                lh0 = hs0[len(hs0) // 2] if hs0 else 30
+                figs = self.figures(img)
+                circ = []
+                if figs:  # 선지 번호 ①~⑤ (OCR 은 동그라미 숫자를 못 읽는 일이 많음): 그림 상자가 선지 줄을 품으면 잘라 냄
+                    import marks
+                    try:
+                        circ = [{"box": b, "val": ch} for b, ch in marks.find_circles(np.asarray(img.convert("L")), lh0)
+                                if ch in CHOICE_MARKS]
+                    except Exception:  # noqa: BLE001
+                        circ = []
+                figs = trim_text(figs, ws + circ, lh0)
                 figs = [dict(f, box=ink_box(img, f["box"])) for f in figs]  # 지우는 곳도 실제 그림까지만
             except Exception:  # noqa: BLE001  그림 찾기가 실패해도 글자·수식은 읽음
                 figs = []
@@ -430,6 +602,7 @@ class PassageReader:
         cws = sorted((w["box"][2] - w["box"][0]) / len(w["val"]) for w in ws
                      if HANGUL_RUN.fullmatch(w["val"]) and len(w["val"]) >= 2)
         cw = cws[len(cws) // 2] if cws else 0.75 * lh
+        self.last_em = cw / s if cws else None  # 원본 그림 기준 한글 한 글자 폭 (PDF 변환에서 글자 크기 추정)
         for f in fig_items:  # 그림 크기를 본문 글자 크기에 맞추려고 원본 기준 글자 폭(1em)을 기록
             f["val"].em = cw / s
 
@@ -444,7 +617,7 @@ class PassageReader:
                 if it["val"] not in CHOICE_MARKS:
                     d.rectangle(it["box"], fill="white")
             ws = [w for w in ws if not any(_inter(w["box"], it["box"]) > 0.5 * _area(w["box"]) for it in mark_items)]
-        fboxes = self._formulas(img)
+        fboxes = _split_at_rules(self._formulas(img), np.asarray(img.convert("L")), lh)
         if mark_items:
             # 수식 박스가 네모 칸 (가)·원문자를 품으면 그 자리에서 나눔. 안 나누면 "3 × [빈칸] ……" 이 수식 하나가 되고
             # 네모 칸이 그 뒤에 붙어 순서가 바뀜. 여러 줄 수식(cases 등)은 보기 번호만 나눔
@@ -460,6 +633,7 @@ class PassageReader:
             fboxes = cut
 
         boxes = []
+        korean = []  # 한글 낱말 자리에서 나눈 수식 박스 조각 중 실은 한글 글자인 것 (첫 OCR 이 놓친 글자)
         comps = []  # 조건 칸에 한글이 있는 여러 줄 수식: 줄별로 나눠 읽고 나중에 합침
         gray0 = np.asarray(img.convert("L"))
         for b in fboxes:
@@ -472,17 +646,22 @@ class PassageReader:
                 if comp:
                     comps.append(comp)
                 else:
-                    boxes.append(b)
+                    boxes += self._split_tall_at_hangul(b, ws, cw, gray0)
                 continue
             spans = sorted(sp for w in ws for sp in self._hangul_spans(w, cw)
                            if b[0] <= (sp[0] + sp[1]) / 2 <= b[2] and b[1] <= (sp[2] + sp[3]) / 2 <= b[3])
             x = b[0]
             for s0, s1, *_ in spans + [(b[2], b[2])]:
                 if s0 - x > 0.3 * h:
-                    boxes.append([x, b[1], s0, b[3]])
+                    piece = [x, b[1], s0, b[3]]
+                    t = self._korean_piece(img, piece) if spans else None
+                    if t:
+                        korean.append((piece, t))
+                    else:
+                        boxes.append(piece)
                 x = max(x, s1)
         self._gray = np.asarray(img.convert("L"))
-        self._trimmed = []  # 수식 박스 끝에서 잘라 낸 한글 글자 (자리, 글자)
+        self._trimmed = list(korean)  # 수식 박스 끝에서 잘라 낸 한글 글자 (자리, 글자)
         boxes = [self._trim_tall(img, self._trim_edges(img, b, cw), cw, ws) for b in boxes]
         boxes = [b for b in boxes if b[2] - b[0] > 4]
         for comp in comps:
@@ -496,7 +675,10 @@ class PassageReader:
             d.rectangle(b, fill="white")
         items = [{"box": w["box"], "kind": "text", "val": w["val"]} for w in self._words(masked, text_pass=True)]
         # 수식 검출이 놓친 근호 수식('9√77' = 9√7/7 분수를 글자로 읽음): 그 자리를 수식 인식으로 다시 읽음
-        for it in [it for it in items if _MISSED_ROOT.search(it["val"]) and not HANGUL_RUN.search(it["val"])]:
+        # 수식 검출이 놓친 세로 분수(5/4 를 '15|4' 처럼 두 줄을 한 단어로 읽음): 글자 줄보다 훨씬 키 큰 숫자 단어도 다시 읽음
+        for it in [it for it in items if not HANGUL_RUN.search(it["val"]) and (
+                _MISSED_ROOT.search(it["val"]) or (it["box"][3] - it["box"][1] >= 1.3 * lh
+                                                   and re.fullmatch(r"[-0-9a-zA-Z|/+.]{2,}", it["val"]) and re.search(r"\d", it["val"])))]:
             t = list(it["box"]); h = t[3] - t[1]
             items.remove(it)
             for u in [u for u in items if re.fullmatch(r"[0-9a-z]{1,3}", u["val"])  # 바로 아래 분모
@@ -525,6 +707,15 @@ class PassageReader:
         from formula_marks import split_circle_tail
         for b, crop, latex in zip(boxes, crops, self.mfr(crops) if crops else []):
             latex, tail = split_tail(clean_latex(latex))
+            latex = _array_to_frac(latex, np.asarray(crop.convert("L")), cw)
+            if _hallucinated(latex, b[2] - b[0], cw):
+                # 수식 인식기가 지어낸 결과(같은 조각 반복, \newcommand·\put 같은 수식 밖 명령): 글자 인식으로 대신 읽음
+                t, sc = self._rec_one(img, b)
+                if t.strip() and sc > 0.6:
+                    items.append({"box": list(b), "kind": "text", "val": t.strip()})
+                continue
+            if b[2] - b[0] < 1.2 * cw and re.search(r"\\frac\s*\{\s*\}|\\frac\s*\{[^{}]*\}\s*\{\s*\}", latex):
+                continue  # 한 글자 폭 조각을 빈 분수로 읽음: 옆 한글 글자의 부스러기
             if not tail:  # "…… ⊙": 점선 뒤 동그라미 기호는 원문자 (원문자 검출이 놓친 경우)
                 try:
                     latex, tail = split_circle_tail(latex, np.asarray(crop.convert("L")), lh)
@@ -562,8 +753,11 @@ class PassageReader:
 
         lines = [(cy, unify_choices(single_letters(o_after_math(zero_to_o(fix_choices(segs))))))
                  for cy, segs in merge_lines(items, with_y=True)]
+        # 상자 테두리 같은 긴 가로줄 위·아래 줄은 한 문단으로 잇지 않음 ("(나) …" 와 상자 밖 다음 줄)
+        lines += [(y, [("rule", "")]) for y in _rule_rows(self._gray, img.width)]
         lines = insert_figures(lines, fig_items)
         paras = fix_choice_runs(fix_condition_labels(to_paragraphs(lines)))
+        paras = [_attach_scripts([(k, _fix_words(v) if k == "text" else v) for k, v in p]) for p in paras]
         if self.spacer is not None:
             from spacing import respace_paragraph
             paras = [respace_paragraph(self.spacer, p) for p in paras]
@@ -746,6 +940,9 @@ def to_paragraphs(lines):
     prev_alone = True
     for segs in lines:
         if not segs:
+            continue
+        if segs[0][0] == "rule":
+            prev_alone = True
             continue
         if any(k == "image" for k, _ in segs):  # 그림은 혼자 한 문단
             paras.append(list(segs)); prev_alone = True

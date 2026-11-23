@@ -23,7 +23,7 @@ SYMBOLS = {
     "ast": "AST", "star": "STAR", "circ": "CIRC", "bullet": "BULLET",
     "oplus": "OPLUS", "ominus": "OMINUS", "otimes": "OTIMES", "odot": "ODOT",
     # 관계
-    "le": "LEQ", "leq": "LEQ", "leqslant": "LEQ", "ge": "GEQ", "geq": "GEQ", "geqslant": "GEQ",
+    "le": "LEQ", "leq": "LEQ", "leqslant": "LEQ", "leqq": "LEQ", "geqq": "GEQ", "ge": "GEQ", "geq": "GEQ", "geqslant": "GEQ",
     "ne": "!=", "neq": "!=", "approx": "APPROX", "equiv": "==", "sim": "SIM",
     "simeq": "SIMEQ", "cong": "CONG", "propto": "PROPTO", "ll": "<<", "gg": ">>",
     "doteq": "DOTEQ", "fallingdotseq": "image", "risingdotseq": "REIMAGE",

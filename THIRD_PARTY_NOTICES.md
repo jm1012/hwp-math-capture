@@ -25,6 +25,9 @@
 | Hugging Face tokenizers | Apache-2.0 | https://github.com/huggingface/tokenizers |
 | Shapely, pyclipper, OmegaConf, PyYAML | BSD-3-Clause / MIT | https://pypi.org |
 | Pillow | MIT-CMU (HPND) | https://github.com/python-pillow/Pillow |
+| pypdfium2 (PDFium 포함) | Apache-2.0 / BSD-3-Clause (PDFium) | https://github.com/pypdfium2-team/pypdfium2 |
+| python-hwpx (.hwpx 파일 만들기) | Apache-2.0 | https://pypi.org/project/python-hwpx/ |
+| lxml | BSD-3-Clause | https://github.com/lxml/lxml |
 | pywin32 | PSF-2.0 | https://github.com/mhammond/pywin32 |
 | pystray | LGPL-3.0 | https://github.com/moses-palmer/pystray |
 | NumPy | BSD-3-Clause | https://github.com/numpy/numpy |

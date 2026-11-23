@@ -38,7 +38,7 @@ else:
     print("경고: 이 PyInstaller 버전용 부트로더가 없어 기본 부트로더를 씀 →", PyInstaller.__version__)
 
 # 3-2) 버전 정보 (파일 속성 > 자세히)
-VERSION = os.environ.get("APP_VERSION", "2.0.5")
+VERSION = os.environ.get("APP_VERSION", "2.0.6")
 _v = tuple(int(x) for x in (VERSION.split(".") + ["0", "0", "0"])[:4])
 with open("version_info.txt", "w", encoding="utf-8") as f:
     f.write(f"""VSVersionInfo(
@@ -59,11 +59,14 @@ args = [
     sys.executable, "-m", "PyInstaller", "app.py", "--name", "수식캡처", "--noconfirm", "--clean",
     "--windowed", "--icon", "icon.ico", "--version-file", "version_info.txt",
     "--collect-all", "rapidocr",            # 설정 yaml, 글꼴 등 데이터 파일 포함
+    "--collect-all", "hwpx",                # .hwpx 만들기 (빈 문서 틀 Skeleton.hwpx 포함)
+    "--collect-all", "pypdfium2", "--collect-all", "pypdfium2_raw",  # PDF 쪽 그림·글자 정보 (pdfium.dll)
     "--add-data", f"spacing_data{os.pathsep}spacing_data",   # 띄어쓰기 모델 (4.5MB)
     "--collect-binaries", "onnxruntime",
     "--hidden-import", "pystray._win32", "--hidden-import", "win32clipboard",
     "--copy-metadata", "rapidocr", "--copy-metadata", "onnxruntime", "--copy-metadata", "tokenizers",
-    "--copy-metadata", "numpy", "--copy-metadata", "pyyaml",
+    "--copy-metadata", "numpy", "--copy-metadata", "pyyaml", "--copy-metadata", "python-hwpx",
+    "--copy-metadata", "pypdfium2", "--copy-metadata", "lxml",
     "--exclude-module", "torch", "--exclude-module", "matplotlib", "--exclude-module", "onnx",
 ]
 try:
@@ -121,6 +124,7 @@ with open(os.path.join(out, "사용법.txt"), "w", encoding="utf-8") as f:
     f.write("수식캡처.exe 를 실행하세요.\n"
             "수식 하나: 단축키(기본 Ctrl+Shift+Q)를 누르고 수식을 드래그 → 한글에서 Ctrl+V.\n"
             "글자+수식 지문: 단축키(기본 Ctrl+Alt+J)를 누르고 문제 영역을 드래그 → 한글에서 Ctrl+V.\n"
+            "PDF 전체: 창의 [PDF → 한글 파일] (또는 트레이 메뉴) → PDF 고르기 → 변환 시작 → .hwpx 파일이 만들어짐.\n"
             "끄기: 작업 표시줄의 '수식 캡처' 창에서 [종료].\n"
             "처음 실행 때 'Windows의 PC 보호' 창이 뜨면 [추가 정보] → [실행].\n")
 zip_path = shutil.make_archive(os.path.join("dist", "hwp-math-capture-windows"), "zip", "dist", "수식캡처")
