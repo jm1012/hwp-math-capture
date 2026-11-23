@@ -38,7 +38,7 @@ else:
     print("경고: 이 PyInstaller 버전용 부트로더가 없어 기본 부트로더를 씀 →", PyInstaller.__version__)
 
 # 3-2) 버전 정보 (파일 속성 > 자세히)
-VERSION = os.environ.get("APP_VERSION", "2.0.6")
+VERSION = os.environ.get("APP_VERSION", "2.0.7")
 _v = tuple(int(x) for x in (VERSION.split(".") + ["0", "0", "0"])[:4])
 with open("version_info.txt", "w", encoding="utf-8") as f:
     f.write(f"""VSVersionInfo(
