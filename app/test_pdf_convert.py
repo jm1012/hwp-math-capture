@@ -10,7 +10,8 @@ from PIL import Image, ImageDraw
 
 import pdf_layout as L
 from hwpx_writer import write_hwpx
-from pdf_convert import _put_number, parse_pages
+from pdf_convert import _put_number, group_choices, notice_paragraphs, parse_pages
+from hwpx_writer import layout_choices
 
 
 def test_parse_pages():
@@ -71,12 +72,35 @@ def test_write_hwpx():
         z = zipfile.ZipFile(p)
         s = z.read("Contents/section0.xml").decode("utf-8")
         assert 'colCount="2"' in s and 'columnBreak="1"' in s
+        # 단 구분선은 바탕쪽 세로선 (글 높이와 상관없이 쪽 위~아래)
+        assert 'masterpage' in " ".join(z.namelist()).lower() and "<hp:line " in z.read("Contents/masterpage0.xml").decode()
         assert re.findall(r"<hp:script>(.*?)</hp:script>", s) == ["f(x)=x^2", "{1} over {2}"]
         assert any(n.startswith("BinData/") for n in z.namelist())
         assert 'right="3000" top="0" bottom="2250"' in s and 'dimwidth="3000"' in s  # 40×30 픽셀 × 75
         # 앞 문단의 여백·정렬이 다음 문단으로 번지지 않음 (문단 모양 번호가 서로 달라야 함)
         refs = re.findall(r'<hp:p [^>]*paraPrIDRef="(\d+)"', s)
         assert refs[1] != refs[2] and refs[0] != refs[2]
+
+
+def test_choices():
+    hwp = [[("text", "① "), ("eq", "1"), ("text", "   ② "), ("eq", "2"), ("text", " ③ "), ("eq", "3")],
+           [("text", "④ "), ("eq", "4"), ("text", "  ⑤ "), ("eq", "5")]]
+    g = group_choices([[("text", "1. 값은?")]] + hwp)
+    assert len(g) == 2 and g[1][0][0] == "choices" and len(g[1][0][1]) == 5
+    # 짧은 선지: 한 줄, 같은 간격의 탭 4개
+    rows, tabs = layout_choices(g[1][0][1], 20000, 10)
+    assert len(rows) == 1 and len(tabs) == 4 and tabs[1] == 2 * tabs[0]
+    # 긴 선지: 3개 + 2개
+    long = [[("text", c + " "), ("eq", "{2 sqrt {2}} over {3} + {1} over {3}")] for c in "①②③④⑤"]
+    rows, tabs = layout_choices(long, 25000, 10)
+    assert [sum(k == "tab" for k, _ in r) for r in rows] == [2, 1] and len(tabs) == 2
+    # 번호가 차례대로가 아니면 그대로
+    assert group_choices([[("text", "① a ③ b")]]) == [[("text", "① a ③ b")]]
+
+
+def test_notice():
+    t = "* 확인 사항\n◦ 답안지의 해당란에 필요한 내용을\n정확히 기입했는지\nㅇ이어서, 선택과목"
+    assert notice_paragraphs(t) == ["* 확인 사항", "○ 답안지의 해당란에 필요한 내용을 정확히 기입했는지", "○ 이어서, 선택과목"]
 
 
 if __name__ == "__main__":

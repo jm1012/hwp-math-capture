@@ -68,11 +68,8 @@ def _segs_for_hwp(para, body_pt):
     from hwp_clipboard import figure_for_hwp
     from latex2hwp import latex_to_hwp
     out = []
-    choice = any(k == "text" and "①" in v for k, v in para)
     for k, v in para:
         if k == "text":
-            if choice:  # 선지 사이 빈칸이 넓으면 단 폭을 넘어 줄이 바뀜: 세 칸으로
-                v = re.sub(r" {4,}", "   ", v)
             out.append(("text", v))
         elif k == "image":
             out.append(("pic", figure_for_hwp(v, body_pt)))
@@ -81,6 +78,70 @@ def _segs_for_hwp(para, body_pt):
                 out.append(("eq", latex_to_hwp(v)))
             except Exception:  # noqa: BLE001
                 out.append(("eq", v))
+    return out
+
+
+CIRC = "①②③④⑤⑥⑦⑧⑨⑩"
+
+
+def _is_choice_para(segs):
+    if not segs or any(k not in ("text", "eq") for k, _ in segs) or segs[0][0] != "text":
+        return False
+    return segs[0][1].lstrip()[:1] in CIRC
+
+
+def _split_choices(segs):
+    """선지 문단(들)의 조각을 번호(①…)마다 나눔: [[("text", "① "), ("eq", …)], …]"""
+    items = []
+    for k, v in segs:
+        if k == "text":
+            for part in re.split(f"([{CIRC}])", v):
+                if not part:
+                    continue
+                if part in CIRC:
+                    items.append([("text", part + " ")])
+                elif part.strip() and items:
+                    items[-1].append(("text", part.strip()))
+        elif items:
+            items[-1].append((k, v))
+    return items
+
+
+def group_choices(hwp):
+    """이어진 선지 문단(원본에서 한 줄이든 여러 줄이든)을 하나의 ("choices", 선지들) 로: 배치는 한글 파일 쓸 때 정함.
+    번호가 ①부터 차례대로일 때만 (아니면 그대로 둠)"""
+    out, i = [], 0
+    while i < len(hwp):
+        if not _is_choice_para(hwp[i]):
+            out.append(hwp[i])
+            i += 1
+            continue
+        j = i
+        while j < len(hwp) and _is_choice_para(hwp[j]):
+            j += 1
+        items = _split_choices([s for para in hwp[i:j] for s in para])
+        marks = [it[0][1][0] for it in items]
+        if len(items) >= 2 and marks == list(CIRC[:len(items)]) and all(len(it) > 1 for it in items):
+            out.append([("choices", items)])
+        else:
+            out += hwp[i:j]
+        i = j
+    return out
+
+
+def notice_paragraphs(text):
+    """안내 상자의 줄들 → 문단들: ○·◦ 로 시작하는 줄에서 새 문단, 아니면 앞 줄에 이어 붙임"""
+    out = []
+    for ln in text.splitlines():
+        ln = ln.strip()
+        if re.match(r"^[ㅇ◦°•](?=\S)|^[ㅇoO0◦°•]\s", ln):  # 동그라미 글머리 (OCR 은 ㅇ, o, 0 로 읽음)
+            ln = "○ " + ln[1:].lstrip()
+        if not ln:
+            continue
+        if out and not ln.startswith("○"):
+            out[-1] += " " + ln
+        else:
+            out.append(ln)
     return out
 
 
@@ -107,7 +168,7 @@ def _put_number(hwp, num, erased):
 
 
 def convert(pdf_path: str, out_path: str, reader, *, pages: str | None = None, dpi: int = 150,
-            figures: bool = True, letters=None, progress=None, cancel=None, log=None) -> Report:
+            figures: bool = True, letters=None, progress=None, cancel=None, log=None, debug_dir=None) -> Report:
     """reader: passage.PassageReader (또는 같은 꼴로 부를 수 있는 것, rec_image 필요).
     progress(완료 수, 전체 수, 글) 로 진행 상황을 알림. cancel: threading.Event (set 되면 멈춤, 지금까지 결과는 저장 안 함)"""
     from hwpx_writer import write_hwpx
@@ -169,6 +230,9 @@ def convert(pdf_path: str, out_path: str, reader, *, pages: str | None = None, d
     for k, (p, img, info) in enumerate(jobs):
         if cancel is not None and cancel.is_set():
             raise Cancelled
+        if p.kind == "notice":
+            results.append(None)
+            continue
         label = f"{p.page + 1}쪽 " + (f"{p.num}번" if p.num is not None else "(이어지는 내용)")
         say(base + 3 * base * k // total, base * 4, f"{label} 인식 중")
         pim = L.problem_image(img, p, info["lh"])
@@ -180,6 +244,14 @@ def convert(pdf_path: str, out_path: str, reader, *, pages: str | None = None, d
         if getattr(reader, "last_em", None):
             ems.append(reader.last_em)
         results.append(paras)
+        if debug_dir:  # 문제 그림과 인식 결과(LaTeX)를 남김: 오류 원인 찾기용
+            import json
+            import os
+            os.makedirs(debug_dir, exist_ok=True)
+            tag = f"p{p.page + 1:02d}_c{p.col}_{p.num if p.num is not None else 'x'}_{k:03d}"
+            pim.save(os.path.join(debug_dir, tag + ".png"))
+            with open(os.path.join(debug_dir, tag + ".json"), "w", encoding="utf-8") as fp:
+                json.dump(paras, fp, ensure_ascii=False, default=lambda o: "[img]")
         if log:
             log(f"{label}: 문단 {len(paras)}개")
 
@@ -214,6 +286,11 @@ def convert(pdf_path: str, out_path: str, reader, *, pages: str | None = None, d
     items = []
     prev_key, prev_bottom = None, None
     for (p, img, info), paras in zip(jobs, results):
+        if p.kind == "notice":
+            b = p.blocks[0].box
+            items.append({"notice": True, "lines": notice_paragraphs(p.blocks[0].text),
+                          "box_pt": (b[0] * px2pt, b[1] * px2pt, (b[2] - b[0]) * px2pt, (b[3] - b[1]) * px2pt)})
+            continue
         key = (p.page, p.col)
         box = p.box
         if key != prev_key:
@@ -228,8 +305,10 @@ def convert(pdf_path: str, out_path: str, reader, *, pages: str | None = None, d
         hwp = [_segs_for_hwp(para, body_pt) for para in paras]
         if p.num is not None:
             hwp = _put_number(hwp, p.num, bool(p.num_box))
-        if p.num is None and items and not col_break:
-            items[-1]["paras"] += hwp
+        hwp = group_choices(hwp)
+        prev_item = next((x for x in reversed(items) if not x.get("notice")), None)
+        if p.num is None and prev_item is not None and not col_break:
+            prev_item["paras"] += hwp
         else:
             items.append({"paras": hwp, "col_break": col_break, "space_pt": space if space > body_pt else 0})
         prev_key, prev_bottom = key, box[3]
@@ -266,10 +345,11 @@ if __name__ == "__main__":
     ap.add_argument("out", nargs="?")
     ap.add_argument("--pages", default="")
     ap.add_argument("--dpi", type=int, default=150)
+    ap.add_argument("--debug", default="", help="문제 그림·인식 결과를 남길 폴더")
     a = ap.parse_args()
     out = a.out or os.path.splitext(a.pdf)[0] + ".hwpx"
     rd = default_reader()
-    rep = convert(a.pdf, out, rd, pages=a.pages, dpi=a.dpi, letters=(True, False),
+    rep = convert(a.pdf, out, rd, pages=a.pages, dpi=a.dpi, letters=(True, False), debug_dir=a.debug or None,
                   progress=lambda d, t, m: print(f"[{d}/{t}] {m}", flush=True))
     print(rep.text())
     print("저장:", out)

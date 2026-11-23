@@ -105,9 +105,14 @@ def is_text_box(img: Image.Image, box) -> bool:
 
 
 def _is_body_text(val: str) -> bool:
-    """그림 상자 안에서 그림이 아니라 본문으로 볼 글자: 선지 번호 ①~⑤.
-    (한글 글자는 기준으로 쓰지 않음: 동전 그림의 '한국은행', '1번째 자리' 같은 그림 속 글자가 있음)"""
-    return any(c in val for c in _CHOICE)
+    """그림 상자 안에서 그림이 아니라 본문으로 볼 글자: 선지 번호 ①~⑤, 문장 끝('구하시오.', '값은?')·배점([4점]).
+    (한글이 있다는 것만으로는 기준으로 쓰지 않음: 동전 그림의 '한국은행', '1번째 자리' 같은 그림 속 글자가 있음)"""
+    return any(c in val for c in _CHOICE) or bool(_SENTENCE.search(val))
+
+
+# 문제 글(문장 끝, 배점): 그림 속 이름표('한국은행', 'A지점')와 달리 그림 안에 있을 수 없음
+import re as _re  # noqa: E402
+_SENTENCE = _re.compile(r"(시오|하라|은\?|는\?|가\?|이다|하자|한다|였다|\[\s*\d+(?:\.\d+)?\s*점\s*\])[.?]?$")
 
 
 def trim_text(figs, words, lh):

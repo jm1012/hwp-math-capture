@@ -18,7 +18,9 @@ from PIL import Image
 
 NUM_HEAD = re.compile(r"^\s*(\d{1,2})\s*[.．]")
 # 안내 블록 (문제 내용이 아님): 이 글자로 시작하는 블록은 버림
-DROP_HEAD = re.compile(r"^\s*(\d\s*지\s*선\s*다\s*형|단\s*답\s*형|※|\*\s*확\s*인|이\s*문제지에\s*관한\s*저작권)")
+DROP_HEAD = re.compile(r"^\s*(\d\s*지\s*선\s*다\s*형|단\s*답\s*형|이\s*문제지에\s*관한\s*저작권)")
+# 시험 안내 상자 ("※ 확인 사항" 등): 문제에 붙이지 않고 원본 자리에 따로 둠
+NOTICE_HEAD = re.compile(r"^\W{0,3}(확\s*인\s*사\s*항|※)")
 PUA = re.compile(r"[-]")
 
 
@@ -35,6 +37,7 @@ class Problem:
     col: int
     blocks: list = field(default_factory=list)
     num_box: list | None = None  # 쪽 그림에서 번호 "12." 가 차지한 곳 (인식 전에 지우고 번호는 글자로 넣음)
+    kind: str = "problem"        # "notice" = 안내 상자 (blocks[0].text 에 줄마다 글)
 
     @property
     def box(self):
@@ -288,6 +291,68 @@ def _block_text(words, box):
     return " ".join(w["val"] for w in ws)
 
 
+def _framed(ink, b, lh):
+    """블록이 네모 테두리 안에 있나 (왼쪽·오른쪽 끝 세로줄이 거의 끝까지)"""
+    x0, y0, x1, y1 = b
+    if y1 - y0 < 2 * lh:
+        return False
+    h = y1 - y0
+    k = max(2, int(0.15 * lh))
+    left = ink[y0:y1, x0:x0 + k].any(axis=1).mean()
+    right = ink[y0:y1, x1 - k:x1].any(axis=1).mean()
+    return left > 0.9 and right > 0.9 and h > 0
+
+
+def _inner(ink, b, lh):
+    """테두리 안쪽 (테두리 선을 뺀 범위)"""
+    m = max(3, int(0.35 * lh))
+    return [b[0] + m, b[1] + m, b[2] - m, b[3] - m]
+
+
+def text_lines(words, box):
+    """블록 안 PDF 글자 정보를 줄별 글로 (위→아래, 줄 안에서 왼쪽→오른쪽)"""
+    ws = [w for w in words if box[0] <= (w["box"][0] + w["box"][2]) / 2 <= box[2]
+          and box[1] <= (w["box"][1] + w["box"][3]) / 2 <= box[3] and not PUA.search(w["val"])]
+    ws.sort(key=lambda w: (w["box"][1] + w["box"][3]) / 2)
+    lines = []
+    for w in ws:
+        cy = (w["box"][1] + w["box"][3]) / 2
+        if lines and abs(cy - lines[-1][0]) < 0.5 * (w["box"][3] - w["box"][1]):
+            lines[-1][1].append(w)
+        else:
+            lines.append([cy, [w]])
+    return [" ".join(x["val"] for x in sorted(l, key=lambda w: w["box"][0])) for _, l in lines]
+
+
+def notice_lines(img, ink, b, lh, words, rec):
+    """안내 상자의 글을 줄별로: PDF 글자 정보가 있으면 그것, 없으면 줄마다 글자 인식"""
+    inner = _inner(ink, b, lh) if _framed(ink, b, lh) else b
+    if words:
+        out = text_lines(words, inner)
+        if out:
+            return out
+    if rec is None:
+        return []
+    return [t for t in (rec(img.crop((max(0, inner[0] - 2), l0 - 2, inner[2] + 2, l1 + 2)))[0].strip()
+                        for l0, l1, _ in _lines(ink, inner, lh)) if t]
+
+
+def _is_notice(img, ink, b, lh, words, rec, text):
+    if NOTICE_HEAD.match(text) or re.match(r"^\W{0,3}확\s*인\s*사\s*항", text.replace("*", "")):
+        return True
+    if text and not text.lstrip().startswith(("확", "※", "*")) and "사항" not in text[:12]:
+        return False
+    if not _framed(ink, b, lh) or rec is None:
+        return False
+    ls = _lines(ink, _inner(ink, b, lh), lh)
+    if not ls:
+        return False
+    l0, l1, _ = ls[0]
+    inner = _inner(ink, b, lh)
+    head = rec(img.crop((max(0, inner[0] - 2), l0 - 2, inner[2] + 2, l1 + 2)))[0]
+    return bool(re.search(r"확\s*인\s*사\s*항", head))
+
+
 def split_page(img: Image.Image, words: list[dict], page: int, dpi: int, rec=None):
     """쪽 그림 + 단어(PDF 글자 정보 또는 OCR) → 문제 목록 (단 순서, 위→아래).
     번호 없는 첫 블록은 num=None (앞 쪽·앞 단의 문제에서 이어지는 내용)."""
@@ -332,6 +397,11 @@ def split_page(img: Image.Image, words: list[dict], page: int, dpi: int, rec=Non
             t = _block_text(words, b) or _rec_text(img, b, lh, rec)
             if DROP_HEAD.match(t) or (b[3] - b[1] < 0.4 * lh and not t):  # 안내 블록, 가로줄
                 continue
+            if _is_notice(img, ink, b, lh, words, rec, t):
+                probs.append(Problem(None, page, ci, [Block(b, "\n".join(notice_lines(img, ink, b, lh, words, rec)))],
+                                     kind="notice"))
+                cur = None
+                continue
             if cur is None:
                 cur = Problem(None, page, ci)
                 probs.append(cur)
@@ -339,7 +409,7 @@ def split_page(img: Image.Image, words: list[dict], page: int, dpi: int, rec=Non
     probs = [p for p in probs if p.blocks]
     # 문제 번호 줄 바로 위에 떨어져 있던 작은 조각(분수의 분자, 위첨자 등)은 그 문제로 옮긴다
     for a, b in zip(probs, probs[1:]):
-        if a.col != b.col or b.num is None:
+        if a.col != b.col or b.num is None or a.kind != "problem":
             continue
         while a.blocks:
             t = a.blocks[-1].box
@@ -349,7 +419,7 @@ def split_page(img: Image.Image, words: list[dict], page: int, dpi: int, rec=Non
                 break
     # 번호 없는 맨 앞 조각 중 글자 없는 얇은 것(머리말 아래 가로줄·제목 띠)은 버림
     probs = [p for p in probs if p.blocks and not (
-        p.num is None and all(not bl.text.strip() and bl.box[3] - bl.box[1] < 1.5 * lh for bl in p.blocks))]
+        p.num is None and p.kind == "problem" and all(not bl.text.strip() and bl.box[3] - bl.box[1] < 1.5 * lh for bl in p.blocks))]
     return probs, {"cols": cols, "top": top, "bot": bot, "lh": lh}
 
 
@@ -379,4 +449,6 @@ def problem_image(img: Image.Image, prob: Problem, lh: float, pad: int = 6, eras
     for s, e in parts:
         out.paste(img.crop((x0, s, x1, e)), (0, y))
         y += e - s + gapw
-    return out
+    # 둘레에 흰 여백: 글자가 그림 가장자리에 붙어 있으면 글자 검출(OCR)이 줄을 통째로 놓치는 일이 있음
+    from PIL import ImageOps
+    return ImageOps.expand(out, border=max(pad, int(0.8 * lh)), fill="white")
