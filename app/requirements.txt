@@ -6,3 +6,5 @@ pillow==10.4.0
 pyyaml
 pywin32
 pystray
+pypdfium2>=5.0
+python-hwpx==7.0.1

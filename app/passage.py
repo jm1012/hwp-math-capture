@@ -122,6 +122,13 @@ class PassageReader:
                 out.append({"box": [min(xs), min(ys), max(xs), max(ys)], "val": txt})
         return out
 
+    def rec_image(self, crop):
+        """작은 그림 한 줄을 글자 인식만 (검출 없이) → (글자, 점수)"""
+        if self.ocr.text_rec is None:
+            self.ocr._load_rec_model()
+        r = self.ocr.text_rec(self._TextRecInput(img=[np.asarray(crop.convert("RGB"))[:, :, ::-1]]))
+        return (r.txts[0].strip(), float(r.scores[0])) if r.txts else ("", 0.0)
+
     def _rec_one(self, img, box):
         crop = img.crop(tuple(int(v) for v in box))
         r = self.ocr.text_rec(self._TextRecInput(img=[np.asarray(crop)[:, :, ::-1]]))
@@ -430,6 +437,7 @@ class PassageReader:
         cws = sorted((w["box"][2] - w["box"][0]) / len(w["val"]) for w in ws
                      if HANGUL_RUN.fullmatch(w["val"]) and len(w["val"]) >= 2)
         cw = cws[len(cws) // 2] if cws else 0.75 * lh
+        self.last_em = cw / s if cws else None  # 원본 그림 기준 한글 한 글자 폭 (PDF 변환에서 글자 크기 추정)
         for f in fig_items:  # 그림 크기를 본문 글자 크기에 맞추려고 원본 기준 글자 폭(1em)을 기록
             f["val"].em = cw / s
 
