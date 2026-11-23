@@ -23,6 +23,20 @@ def _charpr(run):
     return run.element.get("charPrIDRef")
 
 
+def _fix_picture_clip(pic, px_w: int, px_h: int):
+    """그림 자르기 범위(imgClip)와 원본 크기(imgDim)는 '원본 그림' 단위(픽셀 × 75, 96dpi 기준)여야 한다.
+    python-hwpx 는 문서에 보일 크기를 넣어서, 한글 2020이 그림을 원래 크기로 그리고 보일 크기만큼만 잘라 보여 줌
+    (큰 그림의 왼쪽 위만 보임, J PC 2026-11-23). 한글이 그림을 복사할 때 쓰는 값과 같게 고친다."""
+    el = getattr(pic, "element", pic)
+    W, H = str(int(px_w) * 75), str(int(px_h) * 75)
+    for c in el.iter():
+        tag = c.tag.split("}")[-1]
+        if tag == "imgClip":
+            c.set("left", "0"); c.set("top", "0"); c.set("right", W); c.set("bottom", H)
+        elif tag == "imgDim":
+            c.set("dimwidth", W); c.set("dimheight", H)
+
+
 def write_hwpx(path: str, items, *, page_w_pt: float, page_h_pt: float, margins_pt=(42, 42, 42, 42),
                cols: int = 2, col_gap_pt: float = 24, col_line: bool = True, body_pt: float = 10.0,
                eq_font: str = "HYhwpEQ") -> dict:
@@ -40,13 +54,16 @@ def write_hwpx(path: str, items, *, page_w_pt: float, page_h_pt: float, margins_
         d.page.set_columns(cols, same_gap=round(col_gap_pt * PT), **kw)
     col_w = (page_w_pt * PT - l - r - (cols - 1) * col_gap_pt * PT) / cols
 
+    base_pp = d.paragraphs[0].element.get("paraPrIDRef", "0")
     n_eq = n_pic = n_par = 0
     body_cp = None
     first = True
     for it in items:
         paras = it["paras"] or [[("text", "")]]
         for pi, segs in enumerate(paras):
-            p = d.add_paragraph("", include_run=False) if not first else d.paragraphs[0]
+            # 문단 모양은 늘 기본(0번)에서 시작: add_paragraph 는 앞 문단의 모양(여백·가운데 정렬)을 물려받음
+            p = d.add_paragraph("", include_run=False, para_pr_id_ref=base_pp, inherit_style=False) \
+                if not first else d.paragraphs[0]
             first = False
             n_par += 1
             if pi == 0:
@@ -77,7 +94,8 @@ def write_hwpx(path: str, items, *, page_w_pt: float, page_h_pt: float, margins_
                     if w > col_w:
                         w, h = col_w, h * col_w / w
                     item = d.media.add_image(png, "png")
-                    p.add_picture(item, width=max(1, round(w)), height=max(1, round(h)), char_pr_id_ref=body_cp)
+                    pic = p.add_picture(item, width=max(1, round(w)), height=max(1, round(h)), char_pr_id_ref=body_cp)
+                    _fix_picture_clip(pic, _pw, _ph)
                     n_pic += 1
             if not p.runs:
                 p.add_run("", char_pr_id_ref=body_cp)

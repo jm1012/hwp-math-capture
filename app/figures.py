@@ -113,9 +113,15 @@ def _is_body_text(val: str) -> bool:
 def trim_text(figs, words, lh):
     """그림 상자가 선지 줄까지 품고 있으면 그 줄을 빼고 위나 아래 큰 쪽만 남긴다.
     남는 쪽이 너무 작으면 그 그림은 버린다. figs: FigureDetector 결과, words: [{"box", "val"}] (OCR 단어)"""
+    import re
     out = []
     for f in figs:
         b = list(f["box"])
+        # 본문 글이 잔뜩 든 큰 '표'(문제 전체를 표로 잡은 경우, 스캔본 사설 30번): 그림이 아님
+        n_ko = sum(len(re.findall(r"[가-힣]", w["val"])) for w in words
+                   if b[0] <= (w["box"][0] + w["box"][2]) / 2 <= b[2] and b[1] <= (w["box"][1] + w["box"][3]) / 2 <= b[3])
+        if f.get("kind") == "table" and n_ko >= 40:
+            continue
         inner = [w["box"] for w in words if _is_body_text(w["val"])
                  and b[0] <= (w["box"][0] + w["box"][2]) / 2 <= b[2] and b[1] <= (w["box"][1] + w["box"][3]) / 2 <= b[3]]
         if inner:

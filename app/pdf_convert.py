@@ -33,7 +33,14 @@ class Report:
         if self.counts:
             out.append(f"문단 {self.counts.get('paragraphs', 0)}개, 수식 {self.counts.get('equations', 0)}개, "
                        f"그림 {self.counts.get('pictures', 0)}개")
-        out += [f"{p}쪽 건너뜀: {why}" for p, why in self.skipped]
+        # 같은 이유로 이어진 쪽은 묶어서 ("21~40쪽 건너뜀: 짝수형 …")
+        runs = []
+        for p, why in self.skipped:
+            if runs and runs[-1][2] == why and runs[-1][1] == p - 1:
+                runs[-1][1] = p
+            else:
+                runs.append([p, p, why])
+        out += [f"{a}쪽 건너뜀: {why}" if a == b else f"{a}~{b}쪽 건너뜀: {why}" for a, b, why in runs]
         out += self.warnings
         return "\n".join(out)
 
@@ -61,8 +68,11 @@ def _segs_for_hwp(para, body_pt):
     from hwp_clipboard import figure_for_hwp
     from latex2hwp import latex_to_hwp
     out = []
+    choice = any(k == "text" and "①" in v for k, v in para)
     for k, v in para:
         if k == "text":
+            if choice:  # 선지 사이 빈칸이 넓으면 단 폭을 넘어 줄이 바뀜: 세 칸으로
+                v = re.sub(r" {4,}", "   ", v)
             out.append(("text", v))
         elif k == "image":
             out.append(("pic", figure_for_hwp(v, body_pt)))
@@ -213,6 +223,8 @@ def convert(pdf_path: str, out_path: str, reader, *, pages: str | None = None, d
             space = (box[1] - prev_bottom) * px2pt
             col_break = False
         space = max(0.0, min(0.6 * col_h, 0.9 * space))
+        if col_break or prev_key is None or key != prev_key:
+            space = min(space, 3 * body_pt)  # 단 첫 문제: 위 안내 상자(5지선다형 등)를 뺀 자리만큼 비우지 않음
         hwp = [_segs_for_hwp(para, body_pt) for para in paras]
         if p.num is not None:
             hwp = _put_number(hwp, p.num, bool(p.num_box))

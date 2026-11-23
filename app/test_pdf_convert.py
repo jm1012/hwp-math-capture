@@ -62,7 +62,7 @@ def test_write_hwpx():
     buf = io.BytesIO()
     Image.new("RGB", (40, 30), "red").save(buf, "PNG")
     items = [{"paras": [[("text", "1. 함수 "), ("eq", "f(x)=x^2"), ("text", " 에 대하여")],
-                        [("pic", (buf.getvalue(), 3000, 2250, 40, 30))]], "col_break": False, "space_pt": 0},
+                        [("pic", (buf.getvalue(), 6000, 4500, 40, 30))]], "col_break": False, "space_pt": 0},
              {"paras": [[("text", "2. 다음 "), ("eq", "{1} over {2}")]], "col_break": True, "space_pt": 30}]
     with tempfile.TemporaryDirectory() as t:
         p = os.path.join(t, "a.hwpx")
@@ -73,6 +73,10 @@ def test_write_hwpx():
         assert 'colCount="2"' in s and 'columnBreak="1"' in s
         assert re.findall(r"<hp:script>(.*?)</hp:script>", s) == ["f(x)=x^2", "{1} over {2}"]
         assert any(n.startswith("BinData/") for n in z.namelist())
+        assert 'right="3000" top="0" bottom="2250"' in s and 'dimwidth="3000"' in s  # 40×30 픽셀 × 75
+        # 앞 문단의 여백·정렬이 다음 문단으로 번지지 않음 (문단 모양 번호가 서로 달라야 함)
+        refs = re.findall(r'<hp:p [^>]*paraPrIDRef="(\d+)"', s)
+        assert refs[1] != refs[2] and refs[0] != refs[2]
 
 
 if __name__ == "__main__":
