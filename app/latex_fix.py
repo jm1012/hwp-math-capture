@@ -71,6 +71,9 @@ def tidy_cases(s: str) -> str:
 
 def clean_latex(s: str) -> str:
     s = s.strip()
+    # g^{\ddot{\phantom{a}}} -> g'' : 빈 글자 위의 점 두 개/한 개는 프라임 ('' / ')
+    s = re.sub(r"\^\s*\{\s*\\ddot\s*\{\s*(?:\\phantom\s*\{[^{}]*\}\s*)?\}\s*\}", "''", s)
+    s = re.sub(r"\^\s*\{\s*\\dot\s*\{\s*(?:\\phantom\s*\{[^{}]*\}\s*)?\}\s*\}", "'", s)
     # 괄호 없는 분수: \frac 12 -> \frac{1}{2}, \frac 1{x} -> \frac{1}{x} (그대로 두면 분모가 빠짐)
     s = re.sub(r"\\([dtc]?frac)\s*([0-9A-Za-z])\s*([0-9A-Za-z])", r"\\\1{\2}{\3}", s)
     s = re.sub(r"\\([dtc]?frac)\s*([0-9A-Za-z])\s*(?=\{)", r"\\\1{\2}", s)
@@ -553,6 +556,8 @@ def fix_choice_numbers(lines):
     # 번호 매기기: 차례에 안 맞는 번호는 버리고, 빈 번호는 앞 번호 + 1 (다음 번호와 겹치면 포기)
     filled = False
     nums, prev = [], 0
+    if len(entries) == 5 and sum(1 for e in entries if e[1] is not None) >= 3:
+        entries = [[li, None, v] for li, _, v in entries]  # 선지 다섯 개가 다 있으면 번호는 ①~⑤ 차례 (③③ 처럼 잘못 읽은 번호)
     for li, n, _ in entries:
         if n is not None and n <= prev:
             n = None

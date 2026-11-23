@@ -117,6 +117,24 @@ def _array_to_frac(latex, gray, cw):
 _WORD_FIX = [("수럼", "수렴"), ("최슷", "최솟"), ("최댄", "최댓"), ("슷자", "숫자")]
 
 
+def _attach_scripts(segs):
+    """위·아래 첨자로 시작하는 수식('^2 g(c)')은 바로 앞 글자 조각('(ln 2)', 한글 없음)의 첨자: 그 조각을 수식 앞으로 옮김"""
+    out = []
+    for k, v in segs:
+        if k == "math" and re.match(r"\s*[\^_]", v) and out and out[-1][0] == "text":
+            m = re.search(r"(\([^()가-힣]{1,12}\)|[A-Za-z0-9]{1,6})$", out[-1][1].rstrip())
+            if m and out[-1][1].rstrip() == out[-1][1].rstrip()[:m.start()] + m.group(1):
+                tok = m.group(1)
+                rest = out[-1][1].rstrip()[:m.start()]
+                tok = re.sub(r"\bln\b", r"\\ln", tok)
+                out[-1] = ("text", rest)
+                if not rest:
+                    out.pop()
+                v = tok + " " + v.lstrip()
+        out.append((k, v))
+    return out
+
+
 def _fix_words(v):
     for a, b in _WORD_FIX:
         if a in v:
@@ -537,7 +555,17 @@ class PassageReader:
             from figures import crop_figure, ink_box, trim_text
             try:
                 hs0 = sorted(w["box"][3] - w["box"][1] for w in ws if HANGUL_RUN.search(w["val"]))
-                figs = trim_text(self.figures(img), ws, hs0[len(hs0) // 2] if hs0 else 30)
+                lh0 = hs0[len(hs0) // 2] if hs0 else 30
+                figs = self.figures(img)
+                circ = []
+                if figs:  # 선지 번호 ①~⑤ (OCR 은 동그라미 숫자를 못 읽는 일이 많음): 그림 상자가 선지 줄을 품으면 잘라 냄
+                    import marks
+                    try:
+                        circ = [{"box": b, "val": ch} for b, ch in marks.find_circles(np.asarray(img.convert("L")), lh0)
+                                if ch in CHOICE_MARKS]
+                    except Exception:  # noqa: BLE001
+                        circ = []
+                figs = trim_text(figs, ws + circ, lh0)
                 figs = [dict(f, box=ink_box(img, f["box"])) for f in figs]  # 지우는 곳도 실제 그림까지만
             except Exception:  # noqa: BLE001  그림 찾기가 실패해도 글자·수식은 읽음
                 figs = []
@@ -629,7 +657,10 @@ class PassageReader:
             d.rectangle(b, fill="white")
         items = [{"box": w["box"], "kind": "text", "val": w["val"]} for w in self._words(masked, text_pass=True)]
         # 수식 검출이 놓친 근호 수식('9√77' = 9√7/7 분수를 글자로 읽음): 그 자리를 수식 인식으로 다시 읽음
-        for it in [it for it in items if _MISSED_ROOT.search(it["val"]) and not HANGUL_RUN.search(it["val"])]:
+        # 수식 검출이 놓친 세로 분수(5/4 를 '15|4' 처럼 두 줄을 한 단어로 읽음): 글자 줄보다 훨씬 키 큰 숫자 단어도 다시 읽음
+        for it in [it for it in items if not HANGUL_RUN.search(it["val"]) and (
+                _MISSED_ROOT.search(it["val"]) or (it["box"][3] - it["box"][1] >= 1.3 * lh
+                                                   and re.fullmatch(r"[-0-9a-zA-Z|/+.]{2,}", it["val"]) and re.search(r"\d", it["val"])))]:
             t = list(it["box"]); h = t[3] - t[1]
             items.remove(it)
             for u in [u for u in items if re.fullmatch(r"[0-9a-z]{1,3}", u["val"])  # 바로 아래 분모
@@ -702,7 +733,7 @@ class PassageReader:
         lines += [(y, [("rule", "")]) for y in _rule_rows(self._gray, img.width)]
         lines = insert_figures(lines, fig_items)
         paras = fix_choice_runs(fix_condition_labels(to_paragraphs(lines)))
-        paras = [[(k, _fix_words(v) if k == "text" else v) for k, v in p] for p in paras]
+        paras = [_attach_scripts([(k, _fix_words(v) if k == "text" else v) for k, v in p]) for p in paras]
         if self.spacer is not None:
             from spacing import respace_paragraph
             paras = [respace_paragraph(self.spacer, p) for p in paras]

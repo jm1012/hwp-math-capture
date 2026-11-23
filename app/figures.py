@@ -130,8 +130,12 @@ def trim_text(figs, words, lh):
         inner = [w["box"] for w in words if _is_body_text(w["val"])
                  and b[0] <= (w["box"][0] + w["box"][2]) / 2 <= b[2] and b[1] <= (w["box"][1] + w["box"][3]) / 2 <= b[3]]
         if inner:
-            top = [b[0], b[1], b[2], min(t[1] for t in inner) - 2]
-            bot = [b[0], max(t[3] for t in inner) + 2, b[2], b[3]]
+            # 선지 줄 전체 (분수 선지의 분모처럼 번호보다 아래·위로 나온 글자까지)
+            a0, a1 = min(t[1] for t in inner), max(t[3] for t in inner)
+            row = [w["box"] for w in words if w["box"][1] < a1 and w["box"][3] > a0
+                   and b[0] <= (w["box"][0] + w["box"][2]) / 2 <= b[2]]
+            top = [b[0], b[1], b[2], min([a0] + [t[1] for t in row]) - 2]
+            bot = [b[0], max([a1] + [t[3] for t in row]) + 2, b[2], b[3]]
             keep = max((top, bot), key=lambda t: t[3] - t[1])
             if keep[3] - keep[1] < max(3 * lh, 0.3 * (b[3] - b[1])):
                 continue
