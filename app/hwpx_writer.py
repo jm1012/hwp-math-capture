@@ -54,8 +54,8 @@ def write_hwpx(path: str, items, *, page_w_pt: float, page_h_pt: float, margins_
                     p.column_break = True
                 if it.get("space_pt"):
                     p.spacing_before_pt = round(float(it["space_pt"]), 1)
-            if segs and all(k == "pic" for k, _ in segs):
-                p.alignment = "CENTER"
+            if segs and (all(k == "pic" for k, _ in segs) or (len(segs) == 1 and segs[0][0] == "eq")):
+                p.alignment = "CENTER"  # 그림만, 또는 수식 하나만 있는 줄(따로 쓴 식)은 가운데
             for k, v in segs:
                 if k == "text":
                     if not v:

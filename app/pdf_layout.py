@@ -184,7 +184,7 @@ def _num_starts(words, x0, x1, y0, y1, lh):
         v = w["val"]
         if re.fullmatch(r"\d{1,2}", v):  # "1" 과 "." 사이가 조금 벌어진 경우: 바로 오른쪽 단어를 이어 봄
             h = b[3] - b[1]
-            nxt = [o for o in words if 0 <= o["box"][0] - b[2] < 0.6 * h and o["box"][1] < (b[1] + b[3]) / 2 < o["box"][3]]
+            nxt = [o for o in words if 0 <= o["box"][0] - b[2] < 0.6 * h and o["box"][1] < b[3] and o["box"][3] > b[1] + 0.4 * h]
             if nxt:
                 v += min(nxt, key=lambda o: o["box"][0])["val"]
         m = NUM_HEAD.match(v)

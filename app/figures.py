@@ -69,6 +69,8 @@ class FigureDetector:
                  min(float(h), float(row[5]))]
             if LABELS[cls] != "table":
                 b = _cut_edge_lines(b, lines)
+            elif is_text_box(img, b):  # 칸 없는 글 상자는 글자로 읽음
+                continue
             if b[2] - b[0] < 8 or b[3] - b[1] < 8:
                 continue
             cand.append({"box": b, "kind": LABELS[cls], "score": sc})
@@ -83,6 +85,23 @@ class FigureDetector:
 
 
 _CHOICE = "①②③④⑤"
+
+
+def is_text_box(img: Image.Image, box) -> bool:
+    """'표'로 찾은 영역이 칸 나눔 없는 글 상자(조건 (가)(나) 상자, 〈보기〉 상자)인지: 테두리 안쪽에 긴 가로·세로줄이 없으면 True.
+    이런 상자는 그림으로 넣지 않고 안의 글자·수식을 읽는다."""
+    x0, y0, x1, y1 = (int(round(v)) for v in box)
+    g = np.asarray(img.convert("L"))[max(0, y0):y1, max(0, x0):x1] < 160
+    h, w = g.shape
+    if h < 20 or w < 20:
+        return False
+    m = max(4, int(0.04 * min(h, w)))  # 테두리 선 두께 + 여유
+    inner = g[m:h - m, m:w - m]
+    if not inner.size:
+        return False
+    rows = inner.mean(axis=1)
+    cols = inner.mean(axis=0)
+    return not (rows > 0.6).any() and not (cols > 0.6).any()
 
 
 def _is_body_text(val: str) -> bool:
