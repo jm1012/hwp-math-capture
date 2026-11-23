@@ -21,6 +21,7 @@ import traceback
 HERE = os.path.dirname(os.path.abspath(sys.argv[0]))
 CONFIG_PATH = os.path.join(HERE, "config.json")
 LOG_PATH = os.path.join(HERE, "history.log")
+OPEN_REQ = os.path.join(HERE, "open_request.txt")  # 이미 켜진 프로그램에 PDF 열기를 부탁할 때
 if sys.stderr is None or sys.stdout is None:  # pythonw 로 실행하면 콘솔이 없음
     sys.stdout = sys.stderr = open(os.path.join(HERE, "error.log"), "a", encoding="utf-8", buffering=1)
 DEFAULT_CONFIG = {"hotkey": "ctrl+shift+q", "passage_hotkey": "ctrl+alt+j", "font_pt": 11, "figures": True,
@@ -163,6 +164,8 @@ class App:
         tk.Button(bar2, text="PDF → 한글 파일", font=("Malgun Gothic", 9),
                   command=lambda: self.events.put("pdf_dialog")).pack(side="right")
         r.protocol("WM_DELETE_WINDOW", lambda: self.events.put("quit"))
+        import dropfiles
+        dropfiles.enable(r, lambda files: self.events.put(("open_pdf", files)))
         self._refresh_hotkey_label()
         r.update_idletasks()
         w, h = r.winfo_reqwidth(), r.winfo_reqheight()
@@ -231,6 +234,8 @@ class App:
                     self.open_hotkey_dialog(ev[1])
                 elif ev == "pdf_dialog":
                     self.open_pdf_dialog()
+                elif kind == "open_pdf":
+                    self.open_pdf_dialog(ev[1])
                 elif ev == "ready":
                     self._set_status("준비 완료", "#1a7f37")
                     self.toast.show("수식 캡처 준비 완료",
@@ -283,19 +288,37 @@ class App:
         except Exception:  # noqa: BLE001  한 번의 오류로 이벤트 처리가 멈추면 종료도 안 됨
             traceback.print_exc()
             self.busy = False
+        self._ticks = getattr(self, "_ticks", 0) + 1
+        if self._ticks % 6 == 0:
+            self._check_open_request()
         self.root.after(80, self._poll)
 
     def _hk(self, mode="formula"):
         from hotkey import pretty
         return pretty(self.cfg[MODES[mode][0]])
 
-    def open_pdf_dialog(self):
+    def open_pdf_dialog(self, files=None):
+        """PDF 변환 창 열기. files(끌어 놓은 파일·명령줄 인자)에 PDF 가 있으면 그 파일을 골라 둔다"""
         from pdf_dialog import PdfDialog
         if getattr(self, "_pdf", None) and self._pdf.win.winfo_exists():
             self._pdf.win.deiconify()
             self._pdf.win.lift()
-            return
-        self._pdf = PdfDialog(self.root, self.rec, self.cfg)
+        else:
+            self._pdf = PdfDialog(self.root, self.rec, self.cfg)
+        if files:
+            self._pdf._dropped(files)
+
+    def _check_open_request(self):
+        """exe 아이콘에 PDF 를 끌어 놓았는데 이미 켜져 있던 경우: 새로 뜬 쪽이 남긴 부탁 파일을 읽음"""
+        try:
+            if os.path.exists(OPEN_REQ):
+                with open(OPEN_REQ, encoding="utf-8") as f:
+                    files = [x for x in f.read().splitlines() if x.strip()]
+                os.remove(OPEN_REQ)
+                if files:
+                    self.events.put(("open_pdf", files))
+        except OSError:
+            pass
 
     def open_hotkey_dialog(self, mode="formula"):
         from hotkey import HotkeyDialog
@@ -420,8 +443,16 @@ class App:
 
 
 if __name__ == "__main__":
+    pdfs = [a for a in sys.argv[1:] if a.lower().endswith(".pdf") and os.path.isfile(a)]
     if already_running():
+        if pdfs:  # exe 아이콘에 PDF 를 끌어 놓음 → 켜져 있는 프로그램이 변환 창을 염
+            with open(OPEN_REQ, "w", encoding="utf-8") as f:
+                f.write("\n".join(os.path.abspath(p) for p in pdfs))
+            sys.exit(0)
         ctypes.windll.user32.MessageBoxW(None, "수식 캡처가 이미 실행 중입니다.\n작업 표시줄의 '수식 캡처' 창을 확인하세요.",
                                          "수식 캡처", 0x40)
         sys.exit(0)
-    App().run()
+    app = App()
+    if pdfs:
+        app.events.put(("open_pdf", [os.path.abspath(p) for p in pdfs]))
+    app.run()

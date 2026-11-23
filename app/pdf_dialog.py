@@ -69,6 +69,9 @@ class PdfDialog:
         self.open_btn = tk.Button(bar, text="결과 열기", font=f, width=9, command=self._open, state="disabled")
         self.open_btn.pack(side="left")
         w.protocol("WM_DELETE_WINDOW", self._close)
+        import dropfiles
+        if dropfiles.enable(w, self._dropped):
+            self._say("PDF 파일을 이 창에 끌어 놓아도 됩니다. 본인이 쓸 권리가 있는 자료만 변환하세요.")
         w.lift()
         w.focus_force()
 
@@ -76,9 +79,28 @@ class PdfDialog:
     def _pick(self):
         p = filedialog.askopenfilename(parent=self.win, title="PDF 고르기", filetypes=[("PDF", "*.pdf")])
         if p:
-            self.pdf.set(os.path.normpath(p))
-            if not self.out.get():
-                self.out.set(os.path.splitext(os.path.normpath(p))[0] + ".hwpx")
+            self.set_pdf(p, keep_out=True)
+
+    def set_pdf(self, p, keep_out=False):
+        """PDF 를 고름. 저장할 곳은 비어 있거나 keep_out=False 이면 PDF 옆 같은 이름 .hwpx"""
+        p = os.path.normpath(p)
+        self.pdf.set(p)
+        if not keep_out or not self.out.get():
+            self.out.set(os.path.splitext(p)[0] + ".hwpx")
+
+    def busy(self):
+        return bool(self.worker and self.worker.is_alive())
+
+    def _dropped(self, files):
+        import dropfiles
+        p = dropfiles.first_pdf(files)
+        if self.busy():
+            self._say("변환 중에는 파일을 바꿀 수 없습니다.", "#d1242f")
+        elif not p:
+            self._say("PDF 파일만 끌어 놓을 수 있습니다.", "#d1242f")
+        else:
+            self.set_pdf(p)
+            self._say("PDF 를 골랐습니다. [변환 시작]을 누르세요.")
 
     def _pick_out(self):
         p = filedialog.asksaveasfilename(parent=self.win, title="저장할 곳", defaultextension=".hwpx",
