@@ -163,10 +163,23 @@ def problem(k: int) -> str:
     from PIL import Image
     w = _work
     p = w.probs[k]
-    with Image.open(W.crop_path(w, k)) as im:
-        crop = _png(im.convert("RGB"))
+    try:
+        with Image.open(W.crop_path(w, k)) as im:
+            crop = _png(im.convert("RGB"))
+    except OSError:  # 안내 상자는 인식하지 않아 문제 그림을 저장하지 않음 → 쪽 그림에서 잘라 보여 줌
+        try:
+            crop = _png(W.page_image(w, p.page).crop(tuple(round(v) for v in p.box)))
+        except Exception:  # noqa: BLE001
+            crop = None
+    result = _view(w.results[k], p.num)
+    if result is None and p.kind == "notice":
+        from pdf_convert import notice_paragraphs
+        try:
+            result = [[["text", t]] for t in notice_paragraphs(p.blocks[0].text)]
+        except Exception:  # noqa: BLE001
+            result = None
     return json.dumps({"k": k, "label": w.label(k), "num": p.num, "kind": p.kind, "flags": w.flags[k],
-                       "crop": crop, "result": _view(w.results[k], p.num),
+                       "crop": crop, "result": result,
                        "regions": w.regions[k] if k < len(w.regions) else [],
                        "user_regions": w.user_regions[k] if k < len(w.user_regions) else [],
                        "page": p.page, "box": p.box}, ensure_ascii=False)
