@@ -258,7 +258,12 @@ $('rv-next').onclick = () => step(1);
 async function select(k) {
   if (busy) return;
   if (cand) { eng.call('drop', { k: cand.k }); cand = null; }
-  cur = await eng.call('problem', { k });
+  try {
+    cur = await eng.call('problem', { k });
+  } catch (e) {
+    say($('rv-msg'), `이 문제를 열지 못했습니다: ${e.message.split('\n').filter(Boolean).pop()}`, 'err');
+    return;
+  }
   fillList();
   renderMain();
   $('rv-list').querySelector('li.sel')?.scrollIntoView({ block: 'nearest' });
@@ -276,6 +281,7 @@ function resultNode(result) {
   const div = document.createElement('div');
   div.className = 'res';
   if (result == null) { div.textContent = '(시험 안내 상자 — 그대로 넣음)'; return div; }
+  if (cur && cur.kind === 'notice') { const n = document.createElement('p'); n.className = 'muted small'; n.textContent = '시험 안내 상자 (인식하지 않고 글 그대로 넣음)'; div.appendChild(n); }
   for (const para of result) {
     const p = document.createElement('p');
     for (const seg of para) {
@@ -305,10 +311,12 @@ function renderMain() {
   const a = document.createElement('div');
   a.className = 'pane';
   a.innerHTML = `<h3>원본 · ${cur.label}</h3>`;
-  const img = new Image();
-  img.className = 'crop'; img.alt = '원본 문제 그림';
-  img.src = 'data:image/png;base64,' + cur.crop;
-  a.appendChild(img);
+  if (cur.crop) {
+    const img = new Image();
+    img.className = 'crop'; img.alt = '원본 문제 그림';
+    img.src = 'data:image/png;base64,' + cur.crop;
+    a.appendChild(img);
+  }
   const b = document.createElement('div');
   b.className = 'pane';
   b.innerHTML = '<h3>인식 결과 <span class="hwpscript">(수식에 마우스를 올리면 한글 수식)</span></h3>';
