@@ -78,6 +78,28 @@ def text_words(doc, i: int, dpi: int) -> list[dict]:
     return group_words(chars)
 
 
+def text_chars(doc, i: int, dpi: int) -> list:
+    """PDF 글자 정보를 PDF 안의 차례 그대로: [(픽셀 상자 또는 None, 글자)]. 공백·줄바꿈도 넣음 (띄어쓰기 맞추기용)"""
+    page = doc[i]
+    tp = page.get_textpage()
+    n = tp.count_chars()
+    if n <= 0:
+        return []
+    H = page.get_height()
+    s = dpi / 72
+    out = []
+    for k in range(n):
+        ch = tp.get_text_range(k, 1)
+        if not ch or ch in "\ufffe\ufeff\x00":
+            continue
+        try:
+            l, b, r, t = tp.get_charbox(k)
+        except Exception:  # noqa: BLE001  줄바꿈처럼 상자가 없는 글자
+            l = r = 0
+        out.append(([l * s, (H - t) * s, r * s, (H - b) * s] if r > l else None, ch))
+    return out
+
+
 def group_words(chars) -> list[dict]:
     """[(상자, 글자)] → 줄로 묶고 간격으로 나눈 단어 목록"""
     lines = []  # 글자 높이 큰 것부터 줄 기준을 잡음 (점·쉼표처럼 작은 글자가 줄을 만들지 않게)

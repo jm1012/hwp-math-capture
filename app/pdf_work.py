@@ -68,21 +68,50 @@ def _balanced(latex: str) -> bool:
     return len(re.findall(r"\\left\b", latex)) == len(re.findall(r"\\right\b", latex))
 
 
+def _frac(w, b):
+    """단어 w 가 상자 b 안에 든 넓이 비율"""
+    x0, y0, x1, y1 = w["box"]
+    ix = max(0, min(x1, b[2]) - max(x0, b[0]))
+    iy = max(0, min(y1, b[3]) - max(y0, b[1]))
+    return ix * iy / max(1e-6, (x1 - x0) * (y1 - y0))
+
+
+def chars_in(chars, boxes) -> list:
+    """PDF 글자 중 문제 상자들 안에 든 것만 (PDF 안의 차례). 밖의 글자·상자 없는 글자는 (None, None) 으로 남겨 구분"""
+    def inside(bx):
+        cx, cy = (bx[0] + bx[2]) / 2, (bx[1] + bx[3]) / 2
+        return any(b[0] <= cx <= b[2] and b[1] <= cy <= b[3] for b in boxes)
+    out = []
+    for bx, c in chars:
+        if bx is not None and inside(bx):
+            out.append((bx, c))
+        elif bx is None and c.isspace() and c not in "\r\n" and out and out[-1][1] is not None:
+            out.append((None, c))  # 상자 없는 공백 (PDF 가 만든 공백)
+        elif out and out[-1] != (None, None):
+            out.append((None, None))
+    return out
+
+
 def hangul_missing(words, blocks, paras) -> int:
     """PDF 글자 정보에 있는 한글 중 결과 글자에 없는 수 (글자 정보가 있는 PDF 만).
     글자 정보 쪽에 없는 글자(그려진 글자 등)는 셀 수 없으므로 '빠진 것'만 센다."""
     from collections import Counter
 
-    def frac(w, b):
-        x0, y0, x1, y1 = w["box"]
-        ix = max(0, min(x1, b[2]) - max(x0, b[0]))
-        iy = max(0, min(y1, b[3]) - max(y0, b[1]))
-        return ix * iy / max(1e-6, (x1 - x0) * (y1 - y0))
-
-    gw = [w["val"] for w in words if sum(frac(w, b.box) for b in blocks) > 0.5]
+    gw = [w["val"] for w in words if sum(_frac(w, b.box) for b in blocks) > 0.5]
     g = Counter(HANGUL.findall(" ".join(gw)))
     o = Counter(HANGUL.findall(" ".join(v for para in paras for k, v in para if k == "text")))
     return sum((g - o).values())
+
+
+def pdf_spacing(chars, blocks, paras):
+    """글자 정보가 있는 PDF 면 한글 사이 띄어쓰기를 PDF 에 맞춤 (spacing.respace_from_pdf). chars: pdf_layout.text_chars"""
+    if not chars or not paras:
+        return paras
+    try:
+        from spacing import respace_from_pdf
+        return respace_from_pdf(paras, chars_in(chars, [b.box for b in blocks]))
+    except Exception:  # noqa: BLE001  띄어쓰기를 못 맞춰도 결과는 그대로 씀
+        return paras
 
 
 def problem_flags(paras, notes=(), crop_size=None, missing=0) -> list:
@@ -259,7 +288,9 @@ def reread(work: Work, k: int, reader, box=None, scale: float = 1.0, regions=Non
         try:
             doc = L.open_pdf(work.pdf)
             words = L.text_words(doc, p.page, work.dpi)
-            missing = hangul_missing(words, [L.Block(b) for b in ([box] if box else [b.box for b in p.blocks])], paras)
+            bl = [L.Block(b) for b in ([box] if box else [b.box for b in p.blocks])]
+            paras = pdf_spacing(L.text_chars(doc, p.page, work.dpi), bl, paras)
+            missing = hangul_missing(words, bl, paras)
         except Exception:  # noqa: BLE001
             pass
     return paras, problem_flags(paras, notes, pim.size, missing), pim, regs

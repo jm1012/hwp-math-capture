@@ -787,7 +787,8 @@ class PassageReader:
         paras = [_attach_scripts([(k, _fix_words(v) if k == "text" else v) for k, v in p]) for p in paras]
         if self.spacer is not None:
             from spacing import respace_paragraph
-            paras = [respace_paragraph(self.spacer, p) for p in paras]
+            paras = [respace_paragraph(self.spacer, p, after_math=i > 0 and bool(paras[i - 1]) and paras[i - 1][-1][0] == "math")
+                     for i, p in enumerate(paras)]
         if letters is not None:
             paras = [unify_letters(p, *letters) for p in paras]
         return [space_choices(_split_commas(p)) for p in paras]
