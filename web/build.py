@@ -222,6 +222,34 @@ def make_cross_kv(npz: str, dst: str):
     onnx.save(m, dst)
 
 
+# 사이트를 새로 올린 직후 브라우저가 예전 파일(10분 캐시)과 새 파일을 섞어 쓰면 화면이 멈춘다.
+# 내용이 바뀌는 파일은 주소에 ?v=<내용 해시> 를 붙여 늘 짝이 맞는 것을 받게 한다.
+VERSIONED = {  # 파일 → 그 안에서 ?v= 를 붙일 주소들
+    "index.html": ['"app.css"', '"app.js"'],
+    "app.js": ["'./engine.js'"],
+    "engine.js": ["'./ort-worker.js'", "'./py-worker.js'"],
+    "py-worker.js": ["'py/app.zip'", "'fonts/NanumGothic.ttf'"],
+}
+
+
+def stamp_version(out: str):
+    h = hashlib.sha256()
+    for f in sorted(os.listdir(os.path.join(WEB, "src"))) + ["py/app.zip", "fonts/NanumGothic.ttf"]:
+        with open(os.path.join(out, f) if "/" in f else os.path.join(WEB, "src", f), "rb") as fh:
+            h.update(f.encode() + b"\0" + fh.read())
+    v = h.hexdigest()[:12]
+    for f, refs in VERSIONED.items():
+        p = os.path.join(out, f)
+        s = open(p, encoding="utf-8").read()
+        for r in refs:
+            if r not in s:
+                raise SystemExit(f"{f}: {r} 를 찾지 못함")
+            s = s.replace(r, r[:-1] + "?v=" + v + r[-1])
+        s = s.replace("__BUILD__", v)
+        open(p, "w", encoding="utf-8").write(s)
+    return v
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default=os.path.join(WEB, "dist"))
@@ -237,6 +265,7 @@ def main():
         build_models(out, a.models)
     for f in os.listdir(os.path.join(WEB, "src")):
         shutil.copy(os.path.join(WEB, "src", f), os.path.join(out, f))
+    stamp_version(out)
     sys.path.insert(0, APP)
     import models
     from pdf_convert import __doc__ as _  # noqa: F401  (app 코드가 import 되는지 확인)

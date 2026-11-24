@@ -85,6 +85,9 @@ export class Engine {
       defaultEp: ep === 'wasm' ? 'wasm' : 'webgpu',
       // 입력 크기가 늘 바뀌는 OCR 모델은 WebGPU 에서 오히려 느려서 WASM 으로
       ep: ep === 'wasm' ? {} : { 'ocr/det.onnx': 'wasm', 'ocr/rec_korean.onnx': 'wasm', ...(opts.epPerModel || {}) },
+      // 파이썬 준비와 겹쳐서 미리 불러 둘 모델 (파이썬이 부르는 차례대로)
+      preload: ['mfr/cross_kv.onnx', 'mfr/encoder_int8.onnx', 'layout/pp-doclayout-plus-l.onnx', 'mfd/pix2text-mfd-1.5.onnx',
+        'ocr/det.onnx', 'ocr/rec_korean.onnx'],
     };
     const ortReady = new Promise((res, rej) => {
       this.ort.onmessage = (e) => { if (e.data.type === 'ready') res(e.data); };
