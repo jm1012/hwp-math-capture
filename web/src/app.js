@@ -3,8 +3,9 @@ import { Engine } from './engine.js';
 
 const $ = (id) => document.getElementById(id);
 const eng = new Engine();
-let pdfFile = null;
-let hwpx = null;      // { name, bytes }
+let jobs = [];        // PDF 마다 { id, file, state: wait|run|done|fail|stop, rep, hwpx: {name, bytes}, msg }
+let nextJob = 1;
+let reviewJob = null; // 문제 확인 중인 작업
 let probs = [];       // 문제 목록
 let cur = null;       // 지금 보는 문제 (problem 결과)
 let cand = null;      // 다시 읽은 후보
@@ -14,7 +15,7 @@ function bar(el, frac) { el.hidden = false; el.firstElementChild.style.width = `
 function mb(n) { return n < 1048576 ? Math.max(1, Math.round(n / 1024)) + 'KB' : (n / 1048576).toFixed(0) + 'MB'; }
 function say(el, text, cls = '') { el.textContent = text; el.className = (el.className.replace(/\b(err|ok)\b/g, '').trim() + ' ' + cls).trim(); }
 function download(name, bytes) {
-  const url = URL.createObjectURL(new Blob([bytes], { type: 'application/hwp+zip' }));
+  const url = URL.createObjectURL(new Blob([bytes], { type: /\.zip$/i.test(name) ? 'application/zip' : 'application/hwp+zip' }));
   const a = document.createElement('a');
   a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 10000);
@@ -68,79 +69,148 @@ async function startEngine() {
     say($('setup-msg'), `준비 완료 (${((performance.now() - t0) / 1000).toFixed(0)}초)`, 'ok');
     $('env').textContent = `계산: ${info.webgpu ? 'WebGPU + CPU' : 'CPU (WASM)'}, CPU 스레드 ${info.threads}개` +
       (info.figures ? '' : ' · 그림 찾기 모델 없음');
-    $('btn-convert').disabled = !pdfFile;
+    renderJobs();
   } catch (e) {
     say($('setup-msg'), `인식 엔진을 시작하지 못했습니다: ${e.message}`, 'err');
     console.error(e);
   }
 }
 
-// ---------------------------------------------------------------- 변환
-function pick(f) {
-  if (!f) return;
-  if (!/\.pdf$/i.test(f.name) && f.type !== 'application/pdf') { say($('cv-msg'), 'PDF 파일만 변환할 수 있습니다.', 'err'); return; }
-  pdfFile = f;
-  $('file-name').textContent = `${f.name} (${mb(f.size)})`;
-  $('btn-convert').disabled = !eng.ready || busy;
-  say($('cv-msg'), '');
+// ---------------------------------------------------------------- 변환 (PDF 여러 개는 하나씩 차례로, 결과도 PDF 마다 따로)
+const STATE = { wait: '대기', run: '변환 중', done: '완료', fail: '실패', stop: '멈춤' };
+
+function addFiles(list) {
+  const fs = [...(list || [])];
+  const bad = fs.filter((f) => !/\.pdf$/i.test(f.name) && f.type !== 'application/pdf');
+  for (const f of fs) if (!bad.includes(f)) jobs.push({ id: nextJob++, file: f, state: 'wait' });
+  say($('cv-msg'), bad.length ? `PDF 가 아닌 파일 ${bad.length}개는 뺐습니다.` : '', bad.length ? 'err' : '');
+  renderJobs();
 }
-$('file').onchange = () => pick($('file').files[0]);
+
+function outName(job) {
+  // 같은 이름 PDF 가 여럿이면 결과 이름이 겹치지 않게 (2), (3) …
+  const base = job.file.name.replace(/\.pdf$/i, '');
+  const same = jobs.filter((j) => j.file.name.replace(/\.pdf$/i, '') === base);
+  const n = same.indexOf(job);
+  return (n > 0 ? `${base} (${n + 1})` : base) + '.hwpx';
+}
+
+function renderJobs() {
+  const waiting = jobs.filter((j) => j.state === 'wait').length;
+  $('file-name').textContent = jobs.length ? `PDF ${jobs.length}개${waiting ? ` (변환할 것 ${waiting}개)` : ''} · 더 놓으면 뒤에 붙습니다` : '아직 고른 파일 없음 · 여러 개를 한꺼번에 놓아도 됩니다';
+  const ul = $('jobs');
+  ul.innerHTML = '';
+  for (const j of jobs) {
+    const li = document.createElement('li');
+    li.className = 'job ' + j.state;
+    const name = document.createElement('span');
+    name.className = 'jname';
+    name.textContent = `${j.file.name} (${mb(j.file.size)})`;
+    const st = document.createElement('span');
+    st.className = 'jstate';
+    st.textContent = STATE[j.state] + (j.msg ? ' · ' + j.msg : '');
+    li.append(name, st);
+    const btns = document.createElement('span');
+    btns.className = 'jbtns';
+    const mk = (t, f, cls) => { const b = document.createElement('button'); b.textContent = t; b.onclick = f; if (cls) b.className = cls; btns.appendChild(b); return b; };
+    if (j.state === 'done') {
+      mk('.hwpx 내려받기', () => download(j.hwpx.name, j.hwpx.bytes), 'primary');
+      mk('문제 확인', () => openReview(j)).disabled = busy;
+    }
+    if (j.state !== 'run' && !busy) mk('빼기', () => { jobs = jobs.filter((x) => x !== j); if (reviewJob === j) { $('review').hidden = true; reviewJob = null; } renderJobs(); });
+    li.appendChild(btns);
+    if (j.rep && j.state === 'done') {
+      const rp = document.createElement('pre');
+      rp.className = 'jrep small muted';
+      rp.textContent = j.rep.text;
+      li.appendChild(rp);
+    }
+    ul.appendChild(li);
+  }
+  const done = jobs.filter((j) => j.state === 'done');
+  $('btn-zip').hidden = done.length < 2;
+  $('btn-convert').disabled = !eng.ready || busy || !waiting;
+  $('btn-convert').textContent = waiting > 1 ? `PDF ${waiting}개 한글 파일로 변환` : '한글 파일로 변환';
+}
+
+$('file').onchange = () => { addFiles($('file').files); $('file').value = ''; };
 const drop = $('drop');
 ['dragenter', 'dragover'].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.add('over'); }));
 ['dragleave', 'drop'].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.remove('over'); }));
-drop.addEventListener('drop', (e) => pick(e.dataTransfer.files[0]));
 // 창 아무 데나 놓아도 받음 (브라우저가 PDF 를 열어 버리지 않게)
 window.addEventListener('dragover', (e) => e.preventDefault());
-window.addEventListener('drop', (e) => { e.preventDefault(); if (e.dataTransfer?.files?.[0]) pick(e.dataTransfer.files[0]); });
+window.addEventListener('drop', (e) => { e.preventDefault(); if (e.dataTransfer?.files?.length) addFiles(e.dataTransfer.files); });
 
+let stopAll = false;
 $('btn-convert').onclick = async () => {
-  if (!pdfFile || busy) return;
+  if (busy) return;
+  const todo = jobs.filter((j) => j.state === 'wait');
+  if (!todo.length) return;
   busy = true;
-  $('btn-convert').disabled = true;
+  stopAll = false;
   $('btn-cancel').hidden = false;
-  $('result').hidden = true;
-  $('review').hidden = true;
-  const t0 = performance.now();
-  eng.onProgress = (p) => {
-    bar($('cv-bar'), p.total ? p.done / p.total : 0);
-    const el = (performance.now() - t0) / 1000;
-    const left = p.done > 0 ? el * (p.total - p.done) / p.done : 0;
-    say($('cv-msg'), `${p.text} · ${el.toFixed(0)}초${left > 5 && p.done > p.total * 0.3 ? ` (남은 시간 약 ${Math.ceil(left / 60)}분)` : ''}`);
-  };
-  try {
-    const bytes = await pdfFile.arrayBuffer();
-    const rep = await eng.call('convert', {
-      name: pdfFile.name, bytes,
-      opts: { pages: $('opt-pages').value.trim(), figures: $('opt-figures').checked, letters_unify: $('opt-letters').checked },
-    }, [bytes]);
-    hwpx = { name: rep.out.split('/').pop(), bytes: rep.hwpx };
-    $('report').textContent = rep.text;
-    $('result').hidden = false;
-    bar($('cv-bar'), 1);
-    say($('cv-msg'), `완료 (${((performance.now() - t0) / 1000).toFixed(0)}초)`, 'ok');
-    probs = [];
-  } catch (e) {
-    const m = String(e.message || e);
-    say($('cv-msg'), /Cancelled/.test(m) ? '멈췄습니다.' : `변환하지 못했습니다: ${m.split('\n').filter(Boolean).slice(-1)[0]}`, /Cancelled/.test(m) ? '' : 'err');
-    console.error(m);
-  } finally {
-    busy = false;
-    $('btn-cancel').hidden = true;
-    $('btn-convert').disabled = !pdfFile;
+  const opts = { pages: $('opt-pages').value.trim(), figures: $('opt-figures').checked, letters_unify: $('opt-letters').checked };
+  const tAll = performance.now();
+  for (const [n, j] of todo.entries()) {
+    if (stopAll) break;
+    j.state = 'run'; j.msg = '';
+    renderJobs();
+    const head = todo.length > 1 ? `(${n + 1}/${todo.length}) ${j.file.name} · ` : '';
+    const t0 = performance.now();
+    eng.onProgress = (p) => {
+      bar($('cv-bar'), p.total ? p.done / p.total : 0);
+      const el = (performance.now() - t0) / 1000;
+      const left = p.done > 0 ? el * (p.total - p.done) / p.done : 0;
+      say($('cv-msg'), `${head}${p.text} · ${el.toFixed(0)}초${left > 5 && p.done > p.total * 0.3 ? ` (남은 시간 약 ${Math.ceil(left / 60)}분)` : ''}`);
+    };
+    try {
+      const bytes = await j.file.arrayBuffer();
+      const rep = await eng.call('convert', { job: j.id, name: j.file.name, out: outName(j), bytes, opts }, [bytes]);
+      j.rep = rep;
+      j.hwpx = { name: outName(j), bytes: rep.hwpx };
+      j.state = 'done';
+      j.msg = `${((performance.now() - t0) / 1000).toFixed(0)}초`;
+    } catch (e) {
+      const m = String(e.message || e);
+      if (/Cancelled/.test(m)) { j.state = 'stop'; j.msg = ''; stopAll = true; } else {
+        j.state = 'fail';
+        j.msg = m.split('\n').filter(Boolean).slice(-1)[0];
+        console.error(m);
+      }
+    }
+    renderJobs();
   }
+  for (const j of jobs) if (j.state === 'stop') j.state = 'wait';
+  busy = false;
+  $('btn-cancel').hidden = true;
+  bar($('cv-bar'), 1);
+  const ok = todo.filter((j) => j.state === 'done').length;
+  say($('cv-msg'), stopAll ? `멈췄습니다 (${ok}개 완료). 남은 PDF 는 [변환]을 다시 누르면 이어서 합니다.`
+    : `${ok}/${todo.length}개 완료 (${((performance.now() - tAll) / 1000).toFixed(0)}초)`, stopAll ? '' : (ok === todo.length ? 'ok' : 'err'));
+  renderJobs();
 };
-$('btn-cancel').onclick = () => { eng.cancel(); say($('cv-msg'), '멈추는 중… (지금 문제를 마치면 멈춤)'); };
-$('btn-save').onclick = () => hwpx && download(hwpx.name, hwpx.bytes);
+$('btn-cancel').onclick = () => { stopAll = true; eng.cancel(); say($('cv-msg'), '멈추는 중… (지금 문제를 마치면 멈춤)'); };
+$('btn-zip').onclick = async () => {
+  const done = jobs.filter((j) => j.state === 'done');
+  const r = await eng.call('zip', { files: done.map((j) => ({ job: j.id, name: j.hwpx.name })) });
+  download('한글변환_' + done.length + '개.zip', r);
+};
 
 // ---------------------------------------------------------------- 문제 확인
-$('btn-review').onclick = async () => {
+async function openReview(j) {
+  if (busy) return;
+  if (cand) { eng.call('drop', { k: cand.k }); cand = null; }
+  await eng.call('useJob', { job: j.id });
+  reviewJob = j;
+  cur = null;
+  $('rv-file').textContent = j.file.name;
   $('review').hidden = false;
   probs = await eng.call('problems');
   fillList();
   $('review').scrollIntoView({ behavior: 'smooth' });
   const first = probs.find((p) => p.flags.length) || probs[0];
   if (first) select(first.k);
-};
+}
 $('only-flag').onchange = fillList;
 
 function fillList() {
@@ -159,7 +229,31 @@ function fillList() {
   }
   const nf = probs.filter((p) => p.flags.length).length;
   $('rv-summary').textContent = `문제 ${probs.length}개 중 확인할 문제 ${nf}개. ⚠ 는 결과 모양만 보고 찾은 것이라, 표시가 없어도 틀린 곳이 있을 수 있습니다.`;
+  updateNav();
 }
+
+function visibleKs() { return [...$('rv-list').children].map((li) => Number(li.dataset.k)); }
+function step(d) {
+  if (!cur) return;
+  const ks = visibleKs();
+  const i = ks.indexOf(cur.k);
+  const k = ks[i + d];
+  if (k !== undefined) select(k);
+}
+function updateNav() {
+  const ks = visibleKs();
+  const i = cur ? ks.indexOf(cur.k) : -1;
+  $('rv-prev').disabled = busy || i <= 0;
+  $('rv-next').disabled = busy || i < 0 || i >= ks.length - 1;
+  $('rv-pos').textContent = i >= 0 ? `${i + 1} / ${ks.length}` : '';
+}
+document.addEventListener('keydown', (e) => {
+  if ($('review').hidden || $('dlg').open || /INPUT|SELECT|TEXTAREA/.test(e.target.tagName)) return;
+  if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); step(-1); }
+  if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); step(1); }
+});
+$('rv-prev').onclick = () => step(-1);
+$('rv-next').onclick = () => step(1);
 
 async function select(k) {
   if (busy) return;
@@ -167,6 +261,7 @@ async function select(k) {
   cur = await eng.call('problem', { k });
   fillList();
   renderMain();
+  $('rv-list').querySelector('li.sel')?.scrollIntoView({ block: 'nearest' });
 }
 
 function mathHtml(latex, hwp) {
@@ -201,6 +296,7 @@ function reasonNode(flags, showNone) {
 }
 
 function renderMain() {
+  updateNav();
   const m = $('rv-main');
   m.innerHTML = '';
   if (!cur) return;
@@ -280,8 +376,8 @@ $('btn-rebuild').onclick = async () => {
   if (busy) return;
   try {
     const r = await eng.call('rebuild');
-    hwpx = { name: r.out.split('/').pop(), bytes: r.hwpx };
-    download(hwpx.name, hwpx.bytes);
+    reviewJob.hwpx = { name: reviewJob.hwpx.name, bytes: r.hwpx };
+    download(reviewJob.hwpx.name, r.hwpx);
     say($('rv-msg'), `다시 만들었습니다 (문단 ${r.counts.paragraphs || 0}개, 수식 ${r.counts.equations || 0}개). 내려받은 파일을 한글에서 여세요.`, 'ok');
   } catch (e) {
     say($('rv-msg'), `만들지 못했습니다: ${e.message}`, 'err');

@@ -145,17 +145,19 @@ async function init(m) {
 // ---------------------------------------------------------------- 요청
 const handlers = {
   init,
-  async convert({ name, bytes, opts }) {
-    py.FS.mkdirTree('/input');
-    const path = '/input/' + name;
+  async convert({ job, name, out, bytes, opts }) {
+    const dir = '/input/' + job;
+    py.FS.mkdirTree(dir);
+    const path = dir + '/' + name;
     py.FS.writeFile(path, new Uint8Array(bytes));
     Atomics.store(cancel, 0, 0);
-    const out = name.replace(/\.pdf$/i, '') + '.hwpx';
-    const rep = JSON.parse(api.convert(path, out, JSON.stringify(opts || {}),
+    const rep = JSON.parse(api.convert(job, path, out || name.replace(/\.pdf$/i, '') + '.hwpx', JSON.stringify(opts || {}),
       (d, t, msg) => self.postMessage({ type: 'progress', done: d, total: t, text: msg })));
     rep.hwpx = py.FS.readFile(rep.out);
     return rep;
   },
+  useJob({ job }) { api.use_job(job); return null; },
+  zip({ files }) { return py.FS.readFile(api.zip_outs(JSON.stringify(files))); },
   problems() { return JSON.parse(api.problems()); },
   problem({ k }) { return JSON.parse(api.problem(k)); },
   pageImage({ page }) { return api.page_image(page); },
