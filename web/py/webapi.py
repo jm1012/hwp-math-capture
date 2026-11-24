@@ -15,8 +15,9 @@ import time
 APP = os.path.dirname(os.path.abspath(__file__))
 WORK = "/work"
 _rec = None
-_work = None          # 지금 열린 pdf_work.Work
+_work = None          # 지금 문제 확인 중인 pdf_work.Work
 _cand = {}            # 문제 번호 → 다시 읽은 후보 (문단들, 의심 이유, 문제 그림, 영역, 사용자 영역)
+_works = {}           # 작업(PDF) 번호 → Work. PDF 마다 /work/<번호>/ 폴더
 
 
 def _png(im) -> str:
@@ -77,27 +78,46 @@ class _Cancel:
         return bool(cancelFlag())
 
 
-def convert(pdf_path: str, out_name: str, opts_json: str, progress) -> str:
+def convert(job: int, pdf_path: str, out_name: str, opts_json: str, progress) -> str:
     """PDF → .hwpx. progress(완료, 전체, 글). 결과: 보고서 JSON (hwpx 는 out 경로에 저장)"""
     global _work, _cand
     from pdf_convert import convert as conv
     opts = json.loads(opts_json or "{}")
-    if os.path.isdir(WORK):
-        shutil.rmtree(WORK)
-    os.makedirs(WORK)
-    out = os.path.join(WORK, out_name)
-    wdir = os.path.join(WORK, "작업")
+    jdir = os.path.join(WORK, str(job))
+    if os.path.isdir(jdir):
+        shutil.rmtree(jdir)
+    os.makedirs(jdir)
+    out = os.path.join(jdir, out_name)
+    wdir = os.path.join(jdir, "작업")
     letters = (bool(opts.get("letters_bold", True)), bool(opts.get("letters_italic", False))) \
         if opts.get("letters_unify", True) else None
     rep = conv(pdf_path, out, _rec.passage, pages=opts.get("pages") or None, dpi=int(opts.get("dpi", 150)),
                figures=bool(opts.get("figures", True)), letters=letters, work_dir=wdir,
                progress=lambda d, t, m: progress(d, t, m), cancel=_Cancel())
     import pdf_work as W
-    _work = W.load(wdir)
-    _work.pdf, _work.out = pdf_path, out
-    _cand = {}
+    w = W.load(wdir)
+    w.pdf, w.out = pdf_path, out
+    _works[job] = w
     return json.dumps({"text": rep.text(), "out": out, "pages": rep.pages, "problems": rep.problems,
                        "seconds": rep.seconds, "counts": rep.counts, "flagged": len(rep.flagged)}, ensure_ascii=False)
+
+
+def use_job(job: int):
+    """문제 확인할 PDF 고르기"""
+    global _work, _cand
+    _work = _works[job]
+    _cand = {}
+
+
+def zip_outs(files_json: str) -> str:
+    """[{job, name}] → 한 zip 파일 (경로를 돌려줌)"""
+    import zipfile
+    files = json.loads(files_json)
+    path = os.path.join(WORK, "all.zip")
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_STORED) as z:
+        for f in files:
+            z.write(_works[f["job"]].out, f["name"])
+    return path
 
 
 def read_file(path: str) -> bytes:

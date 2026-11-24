@@ -89,3 +89,27 @@ dialog::backdrop { background: rgba(0, 0, 0, .45); }
   .rv-list { max-height: 30vh; }
   .cols { grid-template-columns: 1fr; }
 }
+
+/* PDF 목록 */
+.jobs { list-style: none; margin: 0 0 12px; padding: 0; }
+.jobs:empty { display: none; }
+.job { display: grid; grid-template-columns: 1fr auto auto; gap: 4px 12px; align-items: center; padding: 8px 10px;
+  border: 1px solid var(--line); border-radius: 8px; margin-bottom: 6px; }
+.job .jname { overflow-wrap: anywhere; font-weight: 600; }
+.job .jstate { font-size: 13px; color: var(--muted); }
+.job.run .jstate { color: var(--accent); }
+.job.done .jstate { color: var(--ok); }
+.job.fail .jstate { color: var(--warn); }
+.job .jbtns { display: flex; gap: 6px; flex-wrap: wrap; }
+.job .jbtns button { padding: 4px 10px; font-size: 14px; }
+.job .jrep { grid-column: 1 / -1; margin: 2px 0 0; }
+.rv-nav { display: flex; justify-content: center; align-items: center; gap: 16px; margin-top: 14px; }
+.rv-nav button { min-width: 130px; }
+.center { text-align: center; }
+kbd { border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; font-size: 13px; }
+#exe ul, #exe ol, #notice ul { margin: 6px 0; padding-left: 22px; }
+#exe li, #notice li { margin: 3px 0; }
+a { color: var(--accent); }
+@media (max-width: 760px) {
+  .job { grid-template-columns: 1fr; }
+}

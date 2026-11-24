@@ -5,7 +5,9 @@ import { createRequire } from 'module';
 import fs from 'fs';
 import path from 'path';
 const { chromium } = createRequire(import.meta.url)('playwright');
-const [pdf, outDir, pages] = process.argv.slice(2);
+// PDF 는 쉼표로 여러 개 (각각 변환)
+const [pdfArg, outDir, pages] = process.argv.slice(2);
+const pdfs = pdfArg.split(',');
 const BASE = process.env.BASE || 'http://127.0.0.1:8765/';
 fs.mkdirSync(outDir, { recursive: true });
 const browser = await chromium.launch({ args: (process.env.CHROME_ARGS || '').split(' ').filter(Boolean) });
@@ -33,25 +35,41 @@ if (await page.isVisible('#btn-download')) {
 }
 await page.waitForSelector('#setup-msg.ok', { timeout: 300000 });
 console.log(sec(), 'ready:', await page.textContent('#setup-msg'), '|', await page.textContent('#env'));
-await page.setInputFiles('#file', pdf);
+await page.setInputFiles('#file', pdfs);
 if (pages) await page.fill('#opt-pages', pages);
 await page.screenshot({ path: path.join(outDir, '2_ready.png') });
 const tc = Date.now();
 await page.click('#btn-convert');
 await page.waitForTimeout(8000);
 await page.screenshot({ path: path.join(outDir, '3_converting.png') });
-await page.waitForSelector('#result:not([hidden]), #cv-msg.err', { timeout: 3600000 });
+await page.waitForFunction((n) => document.querySelectorAll('#jobs li.done, #jobs li.fail').length >= n, pdfs.length, { timeout: 3600000 });
 const convSec = (Date.now() - tc) / 1000;
 console.log(sec(), 'convert', convSec.toFixed(0) + 's:', await page.textContent('#cv-msg'));
-console.log(await page.textContent('#report'));
-const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#btn-save')]);
-await dl.saveAs(path.join(outDir, dl.suggestedFilename()));
-console.log('saved', dl.suggestedFilename());
+console.log(await page.textContent('#jobs'));
+for (const li of await page.$$('#jobs li.done')) {
+  const [dl] = await Promise.all([page.waitForEvent('download'), (await li.$('text=.hwpx 내려받기')).click()]);
+  await dl.saveAs(path.join(outDir, dl.suggestedFilename()));
+  console.log('saved', dl.suggestedFilename());
+}
+if (pdfs.length > 1) {
+  const [dz] = await Promise.all([page.waitForEvent('download'), page.click('#btn-zip')]);
+  await dz.saveAs(path.join(outDir, dz.suggestedFilename()));
+  console.log('saved zip', dz.suggestedFilename());
+}
 await page.screenshot({ path: path.join(outDir, '4_result.png'), fullPage: true });
 
 // 문제 확인
-await page.click('#btn-review');
+const rows = await page.$$('#jobs li.done');
+await (await rows[rows.length - 1].$('text=문제 확인')).click();
 await page.waitForSelector('#rv-main .cols', { timeout: 60000 });
+console.log('review of', await page.textContent('#rv-file'), await page.textContent('#rv-pos'));
+const l0 = await page.textContent('#rv-main h3');
+await page.click('#rv-next');
+await page.waitForFunction((l) => document.querySelector('#rv-main h3')?.textContent !== l, l0);
+console.log('next ->', await page.textContent('#rv-main h3'), await page.textContent('#rv-pos'));
+await page.keyboard.press('ArrowLeft');
+await page.waitForFunction((l) => document.querySelector('#rv-main h3')?.textContent === l, l0);
+console.log('ArrowLeft ->', await page.textContent('#rv-main h3'));
 await page.waitForTimeout(500);
 await page.locator('#review').screenshot({ path: path.join(outDir, '5_review.png') });
 const tr = Date.now();
