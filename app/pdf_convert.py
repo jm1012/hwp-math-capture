@@ -186,6 +186,7 @@ def convert(pdf_path: str, out_path: str, reader, *, pages: str | None = None, d
     # 1) 쪽마다 단·문제 나누기
     page_info, jobs = [], []   # jobs: (쪽 번호, Problem, 쪽 그림)
     page_words = {}
+    page_chars = {}  # 띄어쓰기 맞추기용 (공백 포함, PDF 안의 차례)
     seen_problem = False
     odd_even = None
     for n, i in enumerate(idx):
@@ -219,6 +220,8 @@ def convert(pdf_path: str, out_path: str, reader, *, pages: str | None = None, d
         seen_problem = seen_problem or any(p.num is not None for p in probs)
         info.update(page=i, size=img.size, text=bool(words))
         page_words[i] = words
+        if words:
+            page_chars[i] = L.text_chars(doc, i, dpi)
         page_info.append(info)
         rep.done_pages.append(i + 1)
         for p in probs:
@@ -232,7 +235,7 @@ def convert(pdf_path: str, out_path: str, reader, *, pages: str | None = None, d
     results = []
     ems = []
     flags, crops, regions = [], {}, []
-    from pdf_work import hangul_missing, problem_flags
+    from pdf_work import hangul_missing, pdf_spacing, problem_flags
     total = len(jobs)
     base = len(idx)
     for k, (p, img, info) in enumerate(jobs):
@@ -253,6 +256,7 @@ def convert(pdf_path: str, out_path: str, reader, *, pages: str | None = None, d
             paras = [[("text", f"[{label} 인식 실패]")]]
         if getattr(reader, "last_em", None):
             ems.append(reader.last_em)
+        paras = pdf_spacing(page_chars.get(p.page) or [], p.blocks, paras)
         results.append(paras)
         regions.append(list(getattr(reader, "last_regions", []) or []))
         miss = hangul_missing(page_words.get(p.page) or [], p.blocks, paras)

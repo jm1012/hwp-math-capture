@@ -50,6 +50,38 @@ def test_flags():
     print("ok test_flags")
 
 
+
+def test_pdf_spacing():
+    """PDF 글자 정보(공백 글자 포함)의 띄어쓰기로 인식 결과의 한글 사이 공백을 맞춤"""
+    def chars(text, y=100):
+        out, x = [], 10.0
+        for c in text:
+            w = 4.0 if c == " " else 10.0
+            out.append(([x, y, x + w, y + 12], c))
+            x += w
+        return out
+    ch = chars("15. 첫째항이 자연수인 수열 \ue000이 있다.") + [(None, "\r"), (None, "\n")] + chars("이산확률변수 \ue001를", 120)
+    paras = [[("text", "첫째 항이자연수인 수열 "), ("math", "a_n"), ("text", "이 있다.")],
+             [("text", "이 산확률변수 "), ("math", "X"), ("text", "를")]]
+    got = W.pdf_spacing(ch, [L.Block([0, 90, 900, 140])], paras)
+    assert got == [[("text", "첫째항이 자연수인 수열 "), ("math", "a_n"), ("text", "이 있다.")],
+                   [("text", "이산확률변수 "), ("math", "X"), ("text", "를")]], got
+    # 문제 상자 밖 글자는 쓰지 않음, 글자 정보가 없으면 그대로
+    assert W.pdf_spacing(ch, [L.Block([0, 0, 900, 50])], paras) == paras
+    assert W.pdf_spacing([], [L.Block([0, 90, 900, 140])], paras) == paras
+
+
+def test_spacer_fixes():
+    from spacing import Spacer, fix_terms, respace_paragraph
+    assert fix_terms("첫째 항이자 연수인 수열") == "첫째항이 자연수인 수열"   # 용어 속 공백은 용어 앞으로
+    assert fix_terms("이 산확률변수") == "이산확률변수"
+    sp = Spacer()
+    # 여러 줄 수식 뒤 조사로 시작하는 문단: 앞 수식을 문맥으로
+    assert respace_paragraph(sp, [("text", "가실수 전체의 집합에서 연속일 때")], after_math=True)[0][1].startswith("가 실수")
+
 if __name__ == "__main__":
     test_roundtrip()
     test_flags()
+    test_pdf_spacing()
+    test_spacer_fixes()
+    print("ok")
