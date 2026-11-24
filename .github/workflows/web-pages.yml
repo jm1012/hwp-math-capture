@@ -1,0 +1,52 @@
+# 웹 버전(web/)을 GitHub Pages 에 올림.
+# 저장소 Settings → Pages → Source 를 "GitHub Actions" 로 한 번 바꿔야 동작한다.
+name: 웹 버전 배포
+
+on:
+  push:
+    branches: [main]
+    paths: ["web/**", "app/**", ".github/workflows/web-pages.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 빌드 도구
+        run: pip install numpy "pillow==10.4.0" pyyaml onnx onnxruntime fonttools
+      - name: 모델 캐시
+        uses: actions/cache@v4
+        with:
+          path: web/.models
+          key: models-${{ hashFiles('app/models.py', 'app/mfr.py') }}
+      - name: 모델 받기와 파생 파일 만들기 (encoder_int8, decoder_kv)
+        working-directory: app
+        run: python -c "import models; models.prepare(models.download('../web/.models'))"
+      - name: 사이트 만들기
+        run: python web/build.py --models web/.models --out web/dist
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
