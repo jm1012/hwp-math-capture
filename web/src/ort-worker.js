@@ -28,16 +28,30 @@ function epFor(key) {
   return want === 'webgpu' && cfg.webgpu ? ['webgpu', 'wasm'] : ['wasm'];
 }
 
-async function create(req) {
-  const eps = epFor(req.key);
+async function makeSession(key) {
+  const eps = epFor(key);
   const t0 = performance.now();
-  const s = await ort.InferenceSession.create(await modelBytes(req.key), {
+  const s = await ort.InferenceSession.create(await modelBytes(key), {
     executionProviders: eps, graphOptimizationLevel: 'all', logSeverityLevel: 3,
   });
+  stats[key] = stats[key] || { runs: 0, ms: 0, load: 0, ep: eps[0] };
+  stats[key].load += performance.now() - t0;
+  return { s, eps };
+}
+
+// 파이썬이 준비되는 동안(몇 초) 모델을 미리 불러 둔다. 파이썬이 같은 모델을 처음 부르면 이것을 넘겨줌
+const early = new Map();
+
+async function create(req) {
+  let got = null;
+  if (early.has(req.key)) {
+    const p = early.get(req.key);
+    early.delete(req.key);
+    got = await p; // 미리 불러오다 실패했으면 null → 아래에서 다시
+  }
+  const { s, eps } = got || await makeSession(req.key);
   const sid = nextSid++;
   sessions.set(sid, { s, key: req.key });
-  stats[req.key] = stats[req.key] || { runs: 0, ms: 0, load: 0, ep: eps[0] };
-  stats[req.key].load += performance.now() - t0;
   return [{ sid, inputs: s.inputNames, outputs: s.outputNames, ep: eps[0] }, []];
 }
 
@@ -122,6 +136,13 @@ self.onmessage = async (ev) => {
     port.onmessage = onRequest;
     self.postMessage({ type: 'ready', webgpu: cfg.webgpu, threads: ort.env.wasm.numThreads,
       isolated: self.crossOriginIsolated });
+    // 하나씩 차례로 (동시에 만들면 메모리가 한꺼번에 늘어남)
+    let chain = Promise.resolve();
+    for (const key of cfg.preload || []) {
+      const p = chain.then(() => makeSession(key)).catch(() => null);
+      chain = p;
+      early.set(key, p);
+    }
   } else if (m.type === 'stats') {
     self.postMessage({ type: 'stats', stats });
   }
