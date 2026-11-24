@@ -534,4 +534,7 @@ $('btn-clear').onclick = async () => {
   location.reload();
 };
 
-boot();
+boot().catch((e) => {
+  say($('setup-msg'), `준비하지 못했습니다: ${e.message}. Ctrl+F5 로 새로 고쳐 보세요.`, 'err');
+  console.error(e);
+});

@@ -148,6 +148,19 @@
   </div>
 </dialog>
 
+<script>
+// 화면 코드가 시작하지 못하면 "확인 중…" 에 멈춰 보이므로, 그때는 까닭과 새로 고침 방법을 보여 준다
+(function () {
+  var hint = ' 사이트가 방금 업데이트되어 예전 파일이 섞였을 수 있습니다. Ctrl+F5 (맥은 Cmd+Shift+R) 로 새로 고쳐 주세요.';
+  function show(why) {
+    var el = document.getElementById('setup-msg');
+    if (el && el.textContent === '확인 중…') { el.className = 'err'; el.textContent = why + hint; }
+  }
+  window.addEventListener('error', function (e) { show('화면을 시작하지 못했습니다 (' + (e.message || '오류') + ').'); });
+  window.addEventListener('unhandledrejection', function (e) { show('화면을 시작하지 못했습니다 (' + ((e.reason && e.reason.message) || e.reason || '오류') + ').'); });
+  setTimeout(function () { show('준비가 시작되지 않습니다.'); }, 30000);
+})();
+</script>
 <script src="vendor/katex/katex.min.js"></script>
 <script type="module" src="app.js"></script>
 </body>
