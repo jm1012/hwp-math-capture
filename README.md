@@ -6,6 +6,7 @@
 - **지문 캡처** (기본 `Ctrl+Alt+J`, v2): 글자와 수식이 섞인 문제 → 글자는 글자로, 수식은 수식 개체로 문장 속에 붙음
 - 인터넷 없이 내 PC(CPU)에서 동작하는 무료 모델 사용: [Pix2Text](https://github.com/breezedeus/Pix2Text) 수식 검출·인식, [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) 한국어 OCR, [quickspacer](https://github.com/cosmoquester/quickspacer) 띄어쓰기 교정
 - 한글 외 프로그램(메모장 등)에 붙이면 수식이 LaTeX 글자(`$…$`)로 붙음
+- **웹 버전** (설치 없이 브라우저에서 PDF → 한글 .hwpx, 문제 확인·오인식 고치기): https://jm1012.github.io/hwp-math-capture/ — 인식은 모두 내 브라우저 안에서 하고 파일은 밖으로 나가지 않습니다. 자세한 내용은 [web/README.md](web/README.md)
 
 ## 로드맵
 
