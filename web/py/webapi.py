@@ -37,6 +37,7 @@ def setup(placeholders: list[str]) -> dict:
         if not os.path.exists(p):
             open(p, "wb").close()
     t0 = time.time()
+    _patch_mfr(mdir)
     from recognizer import Recognizer
     r = Recognizer()
     r._load()
@@ -44,6 +45,30 @@ def setup(placeholders: list[str]) -> dict:
         raise r.error
     _rec = r
     return {"seconds": round(time.time() - t0, 1), "figures": r.passage.figures is not None}
+
+
+def _patch_mfr(mdir):
+    """수식 인식 디코더의 첫 계산(인코더 출력 → cross-attention K/V, 큰 행렬 곱 12개)을 ORT 로.
+    브라우저 numpy 에는 빠른 행렬 곱(BLAS)이 없어 문제 하나에 몇 초씩 걸림. 계산식은 mfr.KVDecoder.start 와 같음."""
+    import numpy as np
+    import onnxruntime
+    import mfr
+    path = os.path.join(mdir, "mfr", "cross_kv.onnx")
+    if not os.path.isfile(path):
+        return
+    sess = onnxruntime.InferenceSession(path)
+
+    def start(self, enc):
+        y = sess.run(None, {"enc": np.ascontiguousarray(enc, dtype=np.float32)})[0]
+        B, T = y.shape[:2]
+        y = y.reshape(B, T, self.LAYERS, 2, self.D)
+        st = {"t": 0, "ck": [], "cv": [], "sk": [None] * self.LAYERS, "sv": [None] * self.LAYERS}
+        for i in range(self.LAYERS):
+            st["ck"].append(self._heads(np.ascontiguousarray(y[:, :, i, 0])))
+            st["cv"].append(self._heads(np.ascontiguousarray(y[:, :, i, 1])))
+        return st
+
+    mfr.KVDecoder.start = start
 
 
 class _Cancel:

@@ -27,7 +27,8 @@ export class Engine {
     for (const k of m.local_models) urls[k] = new URL('models/' + k, import.meta.url).href;
     // 브라우저에서 쓰는 파일 (exe 의 models.missing(for_run) 과 같음: 파생 파일이 있으면 원본 대신)
     const need = ['mfr/encoder_int8.onnx', 'mfr/decoder_kv.npz', 'mfr/tokenizer.json', 'mfd/pix2text-mfd-1.5.onnx',
-      'ocr/det.onnx', 'ocr/rec_korean.onnx', 'ocr/rec_korean_dict.txt', 'layout/pp-doclayout-plus-l.onnx'];
+      'ocr/det.onnx', 'ocr/rec_korean.onnx', 'ocr/rec_korean_dict.txt', 'layout/pp-doclayout-plus-l.onnx',
+      'mfr/cross_kv.onnx'];
     this.files = need.map((k) => ({ key: k, url: urls[k] }));
     this.urls = urls;
     return m;
@@ -94,7 +95,7 @@ export class Engine {
     this.py.onmessage = (e) => this._onPy(e.data);
     this.py.onerror = (e) => { for (const p of this.pending.values()) p.rej(new Error(e.message || '파이썬 워커 오류')); };
     const placeholders = ['mfr/encoder_int8.onnx', 'mfd/pix2text-mfd-1.5.onnx', 'ocr/det.onnx', 'ocr/rec_korean.onnx',
-      'layout/pp-doclayout-plus-l.onnx'];
+      'layout/pp-doclayout-plus-l.onnx', 'mfr/cross_kv.onnx'];
     const pyFiles = ['mfr/tokenizer.json', 'mfr/decoder_kv.npz', 'ocr/rec_korean_dict.txt'];
     this.setupInfo = await this.call('init', {
       ctl: this.ctl, data, cancel: this.cancelBuf, port: ch.port1, manifest: this.manifest,

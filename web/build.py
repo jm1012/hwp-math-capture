@@ -41,6 +41,8 @@ APP_EXCLUDE = {"app", "hotkey", "overlay", "dropfiles", "pdf_dialog", "review_di
 FONT_WHEEL = "koreanize-matplotlib==0.1.1"
 # 파생 모델 (models.py prepare) — 나머지는 config.json 의 Hugging Face 주소에서 받음
 LOCAL_MODELS = ["mfr/encoder_int8.onnx", "mfr/decoder_kv.npz", "mfr/tokenizer.json", "ocr/rec_korean_dict.txt"]
+# 웹 전용: 디코더 cross-attention K/V 계산 (decoder_kv.npz 에서 만듦). 브라우저 numpy 에는 빠른 행렬 곱이 없어서 ORT 로 계산
+WEB_MODELS = ["mfr/cross_kv.onnx"]
 
 
 def fetch(url: str) -> bytes:
@@ -192,6 +194,32 @@ def build_models(out: str, mdir: str):
         dst = os.path.join(out, "models", *rel.split("/"))
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         shutil.copy(os.path.join(mdir, *rel.split("/")), dst)
+    make_cross_kv(os.path.join(mdir, "mfr", "decoder_kv.npz"), os.path.join(out, "models", "mfr", "cross_kv.onnx"))
+
+
+def make_cross_kv(npz: str, dst: str):
+    """enc (B, T, 384) → (B, T, 층×2×256): 층마다 encoder_attn k_proj, v_proj 를 한 번에 (mfr.KVDecoder.start 와 같은 계산)"""
+    import numpy as np
+    import onnx
+    from onnx import TensorProto, helper, numpy_helper
+    sys.path.insert(0, APP)
+    from mfr import KVDecoder
+    w = np.load(npz)
+    ws, bs = [], []
+    for i in range(KVDecoder.LAYERS):
+        for pr in ("k_proj", "v_proj"):
+            ws.append(w[f"{i}.encoder_attn.{pr}.w"].astype(np.float32))
+            bs.append(w[f"{i}.encoder_attn.{pr}.b"].astype(np.float32))
+    W, B = np.concatenate(ws, 1), np.concatenate(bs, 0)
+    g = helper.make_graph(
+        [helper.make_node("MatMul", ["enc", "W"], ["m"]), helper.make_node("Add", ["m", "B"], ["kv"])], "cross_kv",
+        [helper.make_tensor_value_info("enc", TensorProto.FLOAT, ["b", "t", W.shape[0]])],
+        [helper.make_tensor_value_info("kv", TensorProto.FLOAT, ["b", "t", W.shape[1]])],
+        [numpy_helper.from_array(W, "W"), numpy_helper.from_array(B, "B")])
+    m = helper.make_model(g, opset_imports=[helper.make_opsetid("", 17)])
+    m.ir_version = 8
+    onnx.checker.check_model(m)
+    onnx.save(m, dst)
 
 
 def main():
@@ -219,12 +247,13 @@ def main():
         "pyodide_packages": sorted(PYODIDE_PKGS),
         "wheels": wheels,
         "hf": {k: models.HF + "/" + v for k, v in models.FILES.items() if not k.endswith(".yml")},
-        "local_models": LOCAL_MODELS,
+        "local_models": LOCAL_MODELS + (WEB_MODELS if a.models else []),
     }
     if a.models:  # 받기 진행 막대용 파일 크기
         manifest["sizes"] = {k: os.path.getsize(os.path.join(a.models, *k.split("/")))
                              for k in list(manifest["hf"]) + LOCAL_MODELS
                              if os.path.isfile(os.path.join(a.models, *k.split("/")))}
+        manifest["sizes"].update({k: os.path.getsize(os.path.join(out, "models", *k.split("/"))) for k in WEB_MODELS})
     with open(os.path.join(out, "manifest.json"), "w", encoding="utf-8") as f:
         json.dump(manifest, f, ensure_ascii=False, indent=1)
     print("완료:", out)

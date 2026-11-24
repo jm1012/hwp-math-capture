@@ -34,7 +34,7 @@ async function boot() {
   const miss2 = await eng.missingModels();
   if (miss2.length) {
     const total = miss2.reduce((s, f) => s + ((man.sizes || {})[f.key] || 0), 0);
-    say($('setup-msg'), `처음 한 번 인식 모델${total ? ` ${mb(total)}` : ''}을 받아 이 브라우저에 저장합니다. 받은 뒤에는 인터넷 없이도 변환할 수 있습니다.`);
+    say($('setup-msg'), `처음 한 번 인식 모델${total ? `(${mb(total)})` : ''}을 받아 이 브라우저에 저장합니다. 받은 뒤에는 인터넷 없이도 변환할 수 있습니다.`);
     $('btn-download').hidden = false;
     $('btn-download').onclick = async () => {
       $('btn-download').disabled = true;
