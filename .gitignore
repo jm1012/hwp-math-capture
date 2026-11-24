@@ -31,3 +31,8 @@ Thumbs.db
 .DS_Store
 research/step3-passage/gt.json
 app/version_info.txt
+
+# 웹 버전 빌드 결과·내려받은 파일
+web/dist/
+web/.cache/
+web/.models/

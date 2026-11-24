@@ -36,3 +36,17 @@
 | Microsoft Visual C++ 런타임 | Microsoft 재배포 허용 조건 | https://learn.microsoft.com/cpp/windows/redistributing-visual-cpp-files |
 
 각 라이브러리의 라이선스 전문은 해당 저장소와, 실행 파일 폴더 안 `_internal\*.dist-info` 폴더에 들어 있습니다.
+
+## 웹 버전 (`web/`, GitHub Pages)
+
+웹 버전은 위 인식 모델과 파이썬 라이브러리(pywin32, pystray, PyInstaller 제외)를 브라우저 안에서 씁니다. 그 밖에 아래 구성 요소가 사이트에 들어 있습니다.
+
+| 구성 요소 | 라이선스 | 출처 |
+|---|---|---|
+| Pyodide (브라우저용 Python, NumPy·OpenCV·Pillow·lxml·Shapely·pyclipper 빌드 포함) | MPL-2.0 (각 패키지는 원래 라이선스) | https://github.com/pyodide/pyodide |
+| onnxruntime-web | MIT | https://github.com/microsoft/onnxruntime |
+| @embedpdf/pdfium (PDFium WebAssembly) | MIT / BSD-3-Clause (PDFium) | https://github.com/embedpdf/embed-pdf-viewer |
+| KaTeX (문제 확인 창의 수식 표시) | MIT | https://github.com/KaTeX/KaTeX |
+| coi-serviceworker | MIT | https://github.com/gzuidhof/coi-serviceworker |
+| 나눔고딕 (원문자 견본, 필요한 글자만) | SIL OFL 1.1 | https://hangeul.naver.com/font |
+| colorlog, tqdm, requests, six | MIT / MPL-2.0 / Apache-2.0 | https://pypi.org |
