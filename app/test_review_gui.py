@@ -15,6 +15,13 @@ import tempfile
 import time
 import tkinter as tk
 
+if sys.platform == "win32":  # 앱(overlay.py)처럼 DPI 인식: 배율 125% 이상에서도 화면 캡처 좌표가 맞게
+    try:
+        import ctypes
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+    except Exception:  # noqa: BLE001
+        pass
+
 from PIL import ImageGrab
 
 import pdf_work as W
@@ -37,6 +44,7 @@ rec._load()
 root = tk.Tk()
 root.withdraw()
 dlg = ReviewDialog(root, wd, reader=LockedReader(rec), ready=rec.ready)
+dlg.win.attributes("-topmost", True)  # 다른 창에 가려지면 화면 캡처가 그 창을 찍음
 log = []
 
 

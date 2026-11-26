@@ -39,8 +39,8 @@ class ReviewDialog:
         w = self.win = tk.Toplevel(root)
         w.title("문제 확인 — " + os.path.basename(self.work.pdf))
         w.configure(bg="white", padx=12, pady=10)
-        w.geometry("1120x760")
-        w.minsize(900, 600)
+        w.geometry("1220x780")
+        w.minsize(1000, 600)
 
         top = tk.Frame(w, bg="white")
         top.pack(fill="x")
@@ -113,6 +113,11 @@ class ReviewDialog:
         self.msg = tk.Label(w, text="", font=FS, bg="white", fg="#555", anchor="w", justify="left", wraplength=1080)
         self.msg.pack(fill="x", pady=(8, 0))
 
+        # 글자 배율(125% 등)이 커도 버튼 줄이 잘리지 않게: 필요한 너비가 기본보다 크면 창을 넓힘
+        w.update_idletasks()
+        need = w.winfo_reqwidth()
+        if need > w.winfo_width():
+            w.geometry(f"{min(need + 20, w.winfo_screenwidth() - 40)}x{max(780, w.winfo_height())}")
         self.rows = []
         self._fill()
         if self.rows:
