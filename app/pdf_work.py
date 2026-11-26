@@ -145,9 +145,37 @@ def problem_flags(paras, notes=(), crop_size=None, missing=0) -> list:
     marks = [c for c in text if c in CIRC]
     if marks and marks != list(CIRC[:len(marks)]):
         out.append("선지 번호 차례가 이상함")
+    if _choices_mixed(segs):
+        out.append("선지 모양이 서로 다름 (수식을 글자로 읽었을 수 있음)")
     if any(k == "text" and v.startswith("[") and "인식 실패" in v for k, v in segs):
         out.append("인식 실패")
     return list(dict.fromkeys(out))
+
+
+def _choices_mixed(segs) -> bool:
+    """선지 ①~⑤ 중 여럿은 수식인데 어떤 것은 숫자·기호만 든 글자 ('1|4', '2|3π', '−π'): 수식 검출이 놓친 선지.
+    (선지 내용이 원래 글인 문제는 한글이 들어 있어 걸리지 않음)"""
+    choices, curc = [], None
+    for k, v in segs:
+        if k == "text":
+            parts = re.split(f"([{CIRC}])", str(v))
+            for t in parts:
+                if t and t in CIRC:
+                    curc = []
+                    choices.append(curc)
+                elif curc is not None and t.strip():
+                    curc.append(("text", t.strip()))
+        elif k == "math" and curc is not None:
+            curc.append(("math", v))
+        elif k == "image":
+            curc = None
+    if len(choices) < 3:
+        return False
+    n_math = sum(1 for c in choices if any(k == "math" for k, _ in c))
+    bad = sum(1 for c in choices if c and all(k == "text" for k, _ in c)
+              and not HANGUL.search("".join(v for _, v in c))
+              and re.search(r"[0-9π√|/]", "".join(v for _, v in c)))
+    return n_math >= 2 and bad >= 1
 
 
 # ---------------------------------------------------------------- 저장·불러오기
@@ -257,9 +285,10 @@ def page_image(work: Work, page: int, scale: float = 1.0) -> Image.Image:
             pass
 
 
-def reread(work: Work, k: int, reader, box=None, scale: float = 1.0, regions=None):
+def reread(work: Work, k: int, reader, box=None, scale: float = 1.0, regions=None, progress=None):
     """문제 k 를 다시 읽음. box: 쪽 그림(변환 해상도 기준) 위 새 영역 [x0, y0, x1, y1] (없으면 원래 자리).
     scale: 해상도 배율 (2 = 두 배로 그려서 읽기). regions: 사용자가 정한 영역 (문제 그림 픽셀, box 없을 때만).
+    progress(비율 0~1, 글): 진행 상황 알림 (없으면 안 알림)
     → (문단들, 의심 이유, 문제 그림, 이번에 나눈 영역(문제 그림 픽셀, 배율 1 기준))"""
     p = work.probs[k]
     info = work.page_info[work.pinfo[k]]
@@ -279,7 +308,9 @@ def reread(work: Work, k: int, reader, box=None, scale: float = 1.0, regions=Non
     pim = L.problem_image(img, q, info["lh"] * scale)
     kw = {}
     if regions and box is None:
-        kw["regions"] = [{"box": [v * scale for v in r["box"]], "kind": r["kind"]} for r in regions]
+        kw["regions"] = [{"box": [v * scale for v in r["box"]], "kind": r["kind"]} for r in regions if r["kind"] != "unread"]
+    if progress is not None:
+        kw["progress"] = progress
     paras = reader(pim, figures=work.figures, letters=work.letters, **kw)
     notes = list(getattr(reader, "notes", []))
     regs = [{"box": [v / scale for v in r["box"]], "kind": r["kind"]} for r in (getattr(reader, "last_regions", None) or [])]

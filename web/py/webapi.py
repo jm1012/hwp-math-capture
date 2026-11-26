@@ -191,13 +191,14 @@ def page_image(page: int) -> str:
     return _png(W.page_image(_work, page))
 
 
-def reread(k: int, opts_json: str) -> str:
-    """opts: {scale, box, regions}. 후보로 두고 보여 줌 (accept 해야 바뀜)"""
+def reread(k: int, opts_json: str, progress=None) -> str:
+    """opts: {scale, box, regions}. 후보로 두고 보여 줌 (accept 해야 바뀜). progress(비율, 글): 진행 상황"""
     import pdf_work as W
     from PIL import Image
     o = json.loads(opts_json or "{}")
     scale, box, regions = float(o.get("scale", 1.0)), o.get("box"), o.get("regions")
-    paras, fl, pim, regs = W.reread(_work, k, _rec.passage, box=box, scale=scale, regions=regions)
+    paras, fl, pim, regs = W.reread(_work, k, _rec.passage, box=box, scale=scale, regions=regions,
+                                    progress=(lambda f, t: progress(f, t)) if progress is not None else None)
     if scale != 1:
         pim = pim.resize((round(pim.width / scale), round(pim.height / scale)), Image.LANCZOS)
     ureg = regions if regions is not None else ([] if box is not None else None)

@@ -72,9 +72,27 @@ await page.waitForFunction((l) => document.querySelector('#rv-main h3')?.textCon
 console.log('ArrowLeft ->', await page.textContent('#rv-main h3'));
 await page.waitForTimeout(500);
 await page.locator('#review').screenshot({ path: path.join(outDir, '5_review.png') });
+// 읽지 않은 곳(빨간 상자)이 있는 문제가 있으면 그 문제로
+const unreadRow = await page.$('#rv-list li:has(.flag)');
+if (unreadRow) {
+  const ks = await page.$$eval('#rv-list li', (ls) => ls.map((l) => l.dataset.k));
+  for (const k of ks) {
+    await page.click(`#rv-list li[data-k="${k}"]`);
+    await page.waitForFunction((kk) => document.querySelector('#rv-list li.sel')?.dataset.k === kk, k);
+    if (await page.$('#rv-main .cropbox .unread')) { console.log('unread boxes at', await page.textContent('#rv-main h3')); break; }
+  }
+  await page.waitForTimeout(300);
+  await page.locator('#review').screenshot({ path: path.join(outDir, '5b_unread.png') });
+}
 const tr = Date.now();
 await page.click('text=해상도 2배로 다시 읽기');
+// 다시 읽는 중 표시: 진행 막대·하는 일·걸린 시간
+await page.waitForSelector('.pane.rr', { timeout: 10000 });
+await page.waitForTimeout(3000);
+console.log('rereading:', await page.textContent('.pane.rr'));
+await page.locator('#review').screenshot({ path: path.join(outDir, '5c_rereading.png') });
 await page.waitForSelector('.pane.cand', { timeout: 600000 });
+if (await page.$('.pane.rr')) throw new Error('다시 읽기가 끝났는데 진행 표시가 남아 있음');
 console.log(sec(), 'reread x2', ((Date.now() - tr) / 1000).toFixed(1) + 's');
 await page.locator('#review').screenshot({ path: path.join(outDir, '6_candidate.png') });
 await page.click('text=이 결과로 바꾸기');
