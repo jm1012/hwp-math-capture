@@ -558,11 +558,15 @@ class PassageReader:
         return items
 
     # ------------------------------------------------------------ 전체
-    def __call__(self, img: Image.Image, figures: bool = True, letters=None, regions=None):
+    def __call__(self, img: Image.Image, figures: bool = True, letters=None, regions=None, progress=None):
         """letters: (굵게, 기울임) 이면 지문 속 대문자(점 이름 등)를 모두 수식으로, 그 글꼴로 통일. None 이면 그대로.
         regions: 사용자가 정한 영역 [{"box": [x0, y0, x1, y1] (img 픽셀), "kind": "math"|"text"|"image"}].
           image 는 그대로 그림으로, math 는 수식 인식기로만, text 는 글자 인식으로만 읽고 나머지는 자동.
-        읽은 뒤 self.last_regions 에 자동으로 나눈 수식·그림 영역(img 픽셀)을 남긴다 (확인 창에 보여 줌)."""
+        읽은 뒤 self.last_regions 에 자동으로 나눈 수식·그림 영역(img 픽셀)을 남긴다 (확인 창에 보여 줌).
+          아무 영역에도 안 든 잉크(읽지 않은 곳)는 kind "unread" 로 함께 남긴다.
+        progress(비율 0~1, 글): 진행 상황 알림 (확인 창의 '다시 읽는 중' 표시용, 없으면 안 알림)."""
+        say = progress or (lambda f, t: None)
+        say(0.02, "글자 위치 찾는 중")
         img = img.convert("RGB")
         src = img
         self.notes = []  # 이번 인식에서 의심스러운 일 (PDF 변환 확인 창에 표시)
@@ -587,6 +591,7 @@ class PassageReader:
         # 그림·그래프·표: 원본에서 잘라 그림으로 넣고, 그 자리는 하얗게 지워 글자·수식 인식에서 뺀다
         fig_items = []
         if figures and self.figures is not None:
+            say(0.15, "그림 찾는 중")
             from figures import crop_figure, ink_box, trim_text
             try:
                 hs0 = sorted(w["box"][3] - w["box"][1] for w in ws if HANGUL_RUN.search(w["val"]))
@@ -636,6 +641,7 @@ class PassageReader:
                 if it["val"] not in CHOICE_MARKS:
                     d.rectangle(it["box"], fill="white")
             ws = [w for w in ws if not any(_inter(w["box"], it["box"]) > 0.5 * _area(w["box"]) for it in mark_items)]
+        say(0.3, "수식 위치 찾는 중")
         fboxes = _split_at_rules(self._formulas(img), np.asarray(img.convert("L")), lh)
         if mark_items:
             # 수식 박스가 네모 칸 (가)·원문자를 품으면 그 자리에서 나눔. 안 나누면 "3 × [빈칸] ……" 이 수식 하나가 되고
@@ -693,6 +699,7 @@ class PassageReader:
         comp_boxes = [bx for comp in comps for bx in [comp["left"]] + [m for r in comp["rows"] for m in r["maths"]]]
         t1 = time.time()
 
+        say(0.45, "글자 읽는 중")
         masked = img.copy(); d = ImageDraw.Draw(masked)
         for b in boxes + comp_boxes + [it["box"] for it in choice_items]:
             d.rectangle(b, fill="white")
@@ -728,7 +735,11 @@ class PassageReader:
         t2 = time.time()
         crops = [img.crop(tuple(int(v) for v in b)) for b in boxes]
         from formula_marks import split_circle_tail
-        for b, crop, latex in zip(boxes, crops, self.mfr(crops) if crops else []):
+        latexes = []
+        for i in range(0, len(crops), 4):  # 4개씩 (인식기 안의 묶음과 같음): 진행 상황을 알리려고 나눠 부름
+            say(0.55 + 0.4 * i / len(crops), f"수식 읽는 중 ({i + 1}/{len(crops)})")
+            latexes += self.mfr(crops[i:i + 4])
+        for b, crop, latex in zip(boxes, crops, latexes):
             latex, tail = split_tail(clean_latex(latex))
             latex = _array_to_frac(latex, np.asarray(crop.convert("L")), cw)
             if _hallucinated(latex, b[2] - b[0], cw) and list(b) not in forced:
@@ -774,9 +785,19 @@ class PassageReader:
                 latex = clean_latex(self.mfr([img.crop(tuple(int(v) for v in b))])[0])
             items.append({"box": b, "kind": "math", "val": latex})
         self.timing = (t1 - t0, t2 - t1, time.time() - t2)
+        say(0.97, "마무리하는 중")
+        # 읽지 않은 곳: 수식·글·그림 어느 영역에도 안 든 잉크 (수식 상자가 짧아 빠진 부호, 놓친 글자 등)
+        try:
+            unread = unread_ink(np.asarray(img.convert("L")), [it["box"] for it in items] + [f["box"] for f in fig_items]
+                                + [it["box"] for it in choice_items] + u_text + u_math, lh)
+        except Exception:  # noqa: BLE001  점검이 실패해도 결과는 그대로
+            unread = []
+        if unread:
+            self.notes.append(f"읽지 않은 곳 {len(unread)}군데")
         self.last_regions = [{"box": [float(v) / s for v in it["box"]], "kind": "math"} for it in items if it["kind"] == "math"] + \
             [{"box": [float(v) / s for v in f["box"]], "kind": "image"} for f in fig_items] + \
-            [{"box": [float(v) / s for v in r["box"]], "kind": "text"} for r in ureg if r["kind"] == "text"]
+            [{"box": [float(v) / s for v in r["box"]], "kind": "text"} for r in ureg if r["kind"] == "text"] + \
+            [{"box": [float(v) / s for v in b], "kind": "unread"} for b in unread]
 
         lines = [(cy, unify_choices(single_letters(o_after_math(zero_to_o(fix_choices(segs))))))
                  for cy, segs in merge_lines(items, with_y=True)]
@@ -795,6 +816,92 @@ class PassageReader:
 
 
 _MISSED_ROOT = re.compile(r"√|\dV\d")
+
+
+def unread_ink(gray, covered, lh, th=160, pad=2):
+    """어느 영역(covered 상자들)에도 안 든 잉크 덩어리 → 가까운 것끼리 묶은 상자 목록 (gray 픽셀).
+    결과를 바꾸지 않고 '확인할 곳'만 알려 주는 점검. 모양만 본다:
+    - 아주 작은 점(쉼표·마침표·점선), 긴 직선(밑줄·상자 테두리 한 변), 네모 테두리는 뺌
+    - 동그라미(선지 번호 ①~⑤ 등. 번호는 나중에 채워 넣음)와 그 안의 조각은 뺌"""
+    import cv2
+    ink = (gray < th).astype(np.uint8)
+    H, W = ink.shape
+    cov = np.zeros((H, W), bool)
+    for b in covered:
+        x0, y0, x1, y1 = (int(round(v)) for v in b)
+        cov[max(0, y0 - pad):max(0, y1 + pad + 1), max(0, x0 - pad):max(0, x1 + pad + 1)] = True
+    n, lab, st, _ = cv2.connectedComponentsWithStats(ink, connectivity=8)
+    if n <= 1:
+        return []
+    unc = np.bincount(lab[(ink > 0) & ~cov], minlength=n)
+    def ring(x0, y0, x1, y1, m=None):
+        """동그라미(선지 번호 ①~⑤ 등): 한 글자 크기, 가로세로 비슷, 잉크 대부분이 둘레(원)에 있음.
+        안의 숫자가 붙어 있거나 원이 여러 조각으로 끊겨 있어도 됨"""
+        w, h = x1 - x0, y1 - y0
+        if not (0.55 * lh <= w <= 1.6 * lh and 0.55 * lh <= h <= 1.6 * lh and abs(w - h) <= 0.2 * max(w, h)):
+            return False
+        ys, xs = np.nonzero(ink[y0:y1, x0:x1] if m is None else m)
+        if len(xs) < 10:
+            return False
+        dx, dy = (xs + 0.5 - w / 2) / (w / 2), (ys + 0.5 - h / 2) / (h / 2)
+        r = np.hypot(dx, dy)
+        if (r > 0.65).mean() < 0.5:
+            return False
+        # 둘레를 빙 둘러 잉크가 있어야 함 (12 방향 중 11 이상). '는'·'ㅁ' 같은 글자는 빈 방향이 있음
+        o = r > 0.65
+        sec = ((np.arctan2(dy[o], dx[o]) + np.pi) / (2 * np.pi) * 12).astype(int) % 12
+        return len(set(sec.tolist())) >= 11
+
+    rings = [(x, y, x + w, y + h) for i, (x, y, w, h, a) in enumerate(st) if i and ring(x, y, x + w, y + h, lab[y:y + h, x:x + w] == i)]
+    out = []
+    for i in range(1, n):
+        x, y, w, h, a = st[i]
+        if a < 6 or unc[i] < 0.9 * a:
+            continue
+        if max(w, h) < 0.35 * lh:  # 쉼표·마침표·점
+            continue
+        if (h <= 0.2 * lh and w > 2.0 * lh) or (w <= 0.2 * lh and h > 2.0 * lh):  # 밑줄·테두리 한 변
+            continue
+        if w > 2 * lh and h > 1.0 * lh:  # 네모 테두리 (잉크가 상자 가장자리에만)
+            sub = lab[y:y + h, x:x + w] == i
+            e = max(3, int(0.15 * lh))
+            # 안쪽(위 변은 '〈보기〉' 같은 이름표가 붙을 수 있어 한 줄 높이 더 뺌)에 잉크가 거의 없으면 테두리
+            if sub[int(lh):h - e, e:w - e].sum() < 0.05 * a:
+                continue
+        cx, cy = x + w / 2, y + h / 2
+        if any(r[0] - 2 <= cx <= r[2] + 2 and r[1] - 2 <= cy <= r[3] + 2 for r in rings):
+            continue
+        out.append([int(x), int(y), int(x + w), int(y + h)])
+    # 한 글자의 여러 조각('는' = ㄴ + ㅡ)은 하나로
+    gap = 0.3 * lh
+    merged = True
+    while merged and len(out) > 1:
+        merged = False
+        for i in range(len(out)):
+            for j in range(i + 1, len(out)):
+                a, b = out[i], out[j]
+                if a[0] - gap <= b[2] and b[0] - gap <= a[2] and a[1] - gap <= b[3] and b[1] - gap <= a[3]:
+                    out[i] = [min(a[0], b[0]), min(a[1], b[1]), max(a[2], b[2]), max(a[3], b[3])]
+                    del out[j]
+                    merged = True
+                    break
+            if merged:
+                break
+    def in_ring(b):
+        """b 와 닿은 잉크 덩어리 전체(일부는 다른 영역이 덮었어도)가 동그라미인지: 여러 조각으로 끊긴 ①"""
+        m = int(0.6 * lh)
+        wx0, wy0, wx1, wy1 = max(0, b[0] - m), max(0, b[1] - m), min(W, b[2] + m), min(H, b[3] + m)
+        ids = {i for i in set(np.unique(lab[wy0:wy1, wx0:wx1]).tolist()) - {0}
+               if st[i][0] >= wx0 and st[i][1] >= wy0 and st[i][0] + st[i][2] <= wx1 and st[i][1] + st[i][3] <= wy1}
+        if not ids:
+            return False
+        x0 = min(st[i][0] for i in ids); y0 = min(st[i][1] for i in ids)
+        x1 = max(st[i][0] + st[i][2] for i in ids); y1 = max(st[i][1] + st[i][3] for i in ids)
+        if max(x1 - x0, y1 - y0) > 1.6 * lh:
+            return False
+        return ring(x0, y0, x1, y1, np.isin(lab[y0:y1, x0:x1], list(ids)))
+
+    return [b for b in out if not ring(*b) and not in_ring(b)]
 
 
 def _clear_of_words(b, ws):

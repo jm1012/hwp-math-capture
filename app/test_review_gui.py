@@ -1,7 +1,7 @@
 """문제 확인 창 화면 시험 (Windows, 사람 손 없이). 변환할 때 만든 작업 폴더가 있어야 함.
 python test_review_gui.py <작업 폴더> [화면 저장 폴더]
   1) 창을 열고 첫 문제(확인할 문제가 있으면 그것)를 고름        → 1_select.png
-  2) 해상도 2배로 다시 읽기 → 새 결과가 나옴                    → 2_hires.png
+  2) 해상도 2배로 다시 읽기 → 다시 읽는 중 표시 → 새 결과        → 1b_rereading.png, 2_hires.png
   3) 영역 다시 잡기 창(원래 자리) → 위쪽 절반만 잡아 다시 읽기  → 3_picker.png, 4_box.png
   4) 새 결과를 한글로 복사 → 클립보드에 한글 형식이 들어갔는지
   5) 이 결과로 바꾸기 → 한글 파일을 임시 이름으로 다시 저장        → 5_accept.png
@@ -72,6 +72,19 @@ def step1():
     print("결과:", dlg.cur.get("1.0", "end")[:200].replace("\n", " / "))
     shot("1_select.png")
     dlg._reread(scale=2.0)
+    seen = []
+
+    def watch():  # 다시 읽는 동안 진행 표시가 보이는지 (막대·하는 일·초)
+        if dlg.cand is None:
+            if dlg.prog_frame.winfo_ismapped():
+                seen.append(dlg.prog_label.cget("text"))
+                if len(seen) == 3:
+                    shot("1b_rereading.png")
+            root.after(400, watch)
+        else:
+            print("진행 표시:", seen[:1], "…", seen[-1:], "끝난 뒤 숨김:", not dlg.prog_frame.winfo_ismapped())
+            print("진행 표시:", "PASS" if seen and not dlg.prog_frame.winfo_ismapped() else "FAIL")
+    watch()
     wait_cand(step2)
 
 

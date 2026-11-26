@@ -161,7 +161,10 @@ const handlers = {
   problems() { return JSON.parse(api.problems()); },
   problem({ k }) { return JSON.parse(api.problem(k)); },
   pageImage({ page }) { return api.page_image(page); },
-  reread({ k, opts }) { return JSON.parse(api.reread(k, JSON.stringify(opts || {}))); },
+  reread({ k, opts }) {
+    return JSON.parse(api.reread(k, JSON.stringify(opts || {}),
+      (f, msg) => self.postMessage({ type: 'progress', done: f, total: 1, text: msg, what: 'reread' })));
+  },
   accept({ k }) { return JSON.parse(api.accept(k)); },
   drop({ k }) { api.drop(k); return null; },
   rebuild() {

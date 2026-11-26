@@ -10,6 +10,7 @@ let probs = [];       // 문제 목록
 let cur = null;       // 지금 보는 문제 (problem 결과)
 let cand = null;      // 다시 읽은 후보
 let busy = false;
+let rr = null;        // 다시 읽는 중: { k, t0, f, text, what, timer }
 
 function bar(el, frac) { el.hidden = false; el.firstElementChild.style.width = `${Math.round(Math.max(0, Math.min(1, frac)) * 100)}%`; }
 function mb(n) { return n < 1048576 ? Math.max(1, Math.round(n / 1024)) + 'KB' : (n / 1048576).toFixed(0) + 'MB'; }
@@ -298,7 +299,49 @@ function reasonNode(flags, showNone) {
   const p = document.createElement('p');
   p.className = 'reason' + (flags.length ? '' : ' none');
   p.textContent = flags.length ? '확인할 점: ' + flags.join(', ') : (showNone ? '의심되는 곳 없음' : '');
+  if (flags.some((f) => f.startsWith('읽지 않은 곳'))) {
+    p.textContent += ' — 원본 그림의 빨간 상자. [수식·글·그림 영역 나누기]에서 그 상자를 눌러 종류를 정하면 다시 읽습니다.';
+  }
   return p;
+}
+
+// 원본 문제 그림 + 읽지 않은 곳(빨간 상자)
+function cropNode(png, regions) {
+  const box = document.createElement('div');
+  box.className = 'cropbox';
+  const img = new Image();
+  img.className = 'crop'; img.alt = '원본 문제 그림';
+  img.onload = () => {
+    for (const r of regions || []) {
+      if (r.kind !== 'unread') continue;
+      const d = document.createElement('div');
+      d.className = 'unread';
+      d.title = '읽지 않은 곳';
+      const [x0, y0, x1, y1] = r.box, W = img.naturalWidth, H = img.naturalHeight;
+      Object.assign(d.style, { left: `calc(${(x0 / W) * 100}% - 3px)`, top: `calc(${(y0 / H) * 100}% - 3px)`,
+        width: `calc(${((x1 - x0) / W) * 100}% + 6px)`, height: `calc(${((y1 - y0) / H) * 100}% + 6px)` });
+      box.appendChild(d);
+    }
+  };
+  img.src = 'data:image/png;base64,' + png;
+  box.appendChild(img);
+  return box;
+}
+
+// 다시 읽는 중 표시
+function rrNode() {
+  const c = document.createElement('div');
+  c.className = 'pane rr';
+  c.setAttribute('role', 'status');
+  c.innerHTML = '<div class="rr-head"><span class="spin" aria-hidden="true"></span><b>다시 읽는 중…</b> <span class="rr-text"></span></div><div class="bar"><div></div></div>';
+  updateRR(c);
+  return c;
+}
+function updateRR(el = document.querySelector('.pane.rr')) {
+  if (!el || !rr) return;
+  const sec = Math.floor((performance.now() - rr.t0) / 1000);
+  el.querySelector('.rr-text').textContent = `${rr.what ? `(${rr.what}) ` : ''}${rr.text} · ${Math.round(rr.f * 100)}% · ${sec}초`;
+  el.querySelector('.bar > div').style.width = `${Math.max(2, Math.round(rr.f * 100))}%`;
 }
 
 function renderMain() {
@@ -311,12 +354,7 @@ function renderMain() {
   const a = document.createElement('div');
   a.className = 'pane';
   a.innerHTML = `<h3>원본 · ${cur.label}</h3>`;
-  if (cur.crop) {
-    const img = new Image();
-    img.className = 'crop'; img.alt = '원본 문제 그림';
-    img.src = 'data:image/png;base64,' + cur.crop;
-    a.appendChild(img);
-  }
+  if (cur.crop) a.appendChild(cropNode(cur.crop, cur.regions));
   const b = document.createElement('div');
   b.className = 'pane';
   b.innerHTML = '<h3>인식 결과 <span class="hwpscript">(수식에 마우스를 올리면 한글 수식)</span></h3>';
@@ -332,6 +370,7 @@ function renderMain() {
   mk('문제 영역 다시 잡기…', pickBox);
   mk('수식·글·그림 영역 나누기…', editRegions);
   m.appendChild(tools);
+  if (rr && rr.k === cur.k) m.appendChild(rrNode());
   if (cand && cand.k === cur.k) {
     const c = document.createElement('div');
     c.className = 'pane cand';
@@ -354,7 +393,12 @@ async function reread(opts, what) {
   if (!cur || busy) return;
   busy = true;
   const k = cur.k;
+  rr = { k, t0: performance.now(), f: 0, text: '준비하는 중', what: opts.scale > 1 ? '해상도 2배' : opts.box ? '새 문제 영역' : opts.regions ? '정한 영역대로' : '' };
+  eng.onProgress = (p) => { if (rr && p.what === 'reread') { rr.f = p.total ? p.done / p.total : 0; rr.text = p.text; updateRR(); } };
+  rr.timer = setInterval(() => updateRR(), 250);
+  if (cand) { eng.call('drop', { k: cand.k }); cand = null; }
   renderMain();
+  document.querySelector('.pane.rr')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   say($('rv-msg'), `${cur.label} 다시 읽는 중…`);
   try {
     const r = await eng.call('reread', { k, opts });
@@ -363,6 +407,8 @@ async function reread(opts, what) {
   } catch (e) {
     say($('rv-msg'), `다시 읽지 못했습니다: ${String(e.message).split('\n').filter(Boolean).slice(-1)[0]}`, 'err');
   } finally {
+    clearInterval(rr.timer);
+    rr = null;
     busy = false;
     renderMain();
   }
@@ -497,6 +543,12 @@ function editRegions() {
         ctx.lineWidth = 1; ctx.setLineDash([4, 3]);
         for (const r of ai) {
           if (this.user.some((u) => iou(r.box, u.box) > 0.5)) continue;
+          if (r.kind === 'unread') { // 읽지 않은 곳: 빨간 상자 (누르면 고른 종류로 정함)
+            ctx.save(); ctx.setLineDash([]); ctx.lineWidth = 2; ctx.strokeStyle = css('var(--warn)');
+            ctx.strokeRect(r.box[0] * s - 3, r.box[1] * s - 3, (r.box[2] - r.box[0]) * s + 6, (r.box[3] - r.box[1]) * s + 6);
+            ctx.restore();
+            continue;
+          }
           ctx.strokeStyle = css((KIND[r.kind] || ['', 'var(--muted)'])[1]);
           ctx.strokeRect(r.box[0] * s, r.box[1] * s, (r.box[2] - r.box[0]) * s, (r.box[3] - r.box[1]) * s);
         }

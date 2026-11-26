@@ -12,9 +12,10 @@ from __future__ import annotations
 import os
 import queue
 import threading
+import time
 import tkinter as tk
 import traceback
-from tkinter import messagebox
+from tkinter import messagebox, ttk
 
 from PIL import Image, ImageTk
 
@@ -85,6 +86,16 @@ class ReviewDialog:
         self.btn_reg = tk.Button(bar, text="수식·글·그림 영역 나누기…", font=F, command=self._edit_regions)
         self.btn_reg.pack(side="left", padx=6)
 
+        # 다시 읽는 중 표시 (진행 막대 + 지금 하는 일 + 걸린 시간)
+        self.prog_frame = tk.Frame(right, bg="#eef4ff", padx=10, pady=8, highlightthickness=1,
+                                   highlightbackground="#9cc0ff")
+        self.prog_label = tk.Label(self.prog_frame, text="", font=("Malgun Gothic", 10, "bold"), bg="#eef4ff",
+                                   fg="#1f6feb", anchor="w")
+        self.prog_label.pack(fill="x")
+        self.prog_bar = ttk.Progressbar(self.prog_frame, mode="determinate", maximum=100)
+        self.prog_bar.pack(fill="x", pady=(4, 0))
+        self.prog = None  # (문제 k, 시작 시각, 비율, 글)
+
         self.cand_frame = tk.Frame(right, bg="white")
         self.cand_title = tk.Label(self.cand_frame, text="새 결과", font=("Malgun Gothic", 10, "bold"), bg="white",
                                    fg="#1f6feb", anchor="w")
@@ -148,7 +159,7 @@ class ReviewDialog:
         p = self.work.probs[k]
         self._set_text(self.cur, W.preview_text(self.work.results[k], p.num))
         fl = self.work.flags[k]
-        self.reason.config(text=("확인할 점: " + ", ".join(fl)) if fl else "")
+        self.reason.config(text=_reason_text(fl))
         try:
             with Image.open(W.crop_path(self.work, k)) as im:
                 self._crop = im.convert("RGB")
@@ -166,6 +177,12 @@ class ReviewDialog:
         s = min(cw / im.width, ch / im.height, 2.0)
         self._img = ImageTk.PhotoImage(im.resize((max(1, int(im.width * s)), max(1, int(im.height * s))), Image.LANCZOS))
         c.create_image(2, 2, image=self._img, anchor="nw")
+        # 읽지 않은 곳 (어느 영역에도 안 든 잉크): 빨간 상자
+        regs = self.work.regions[self.k] if self.k is not None and self.k < len(self.work.regions) else []
+        for r in regs:
+            if r.get("kind") == "unread":
+                x0, y0, x1, y1 = r["box"]
+                c.create_rectangle(2 + x0 * s - 3, 2 + y0 * s - 3, 2 + x1 * s + 3, 2 + y1 * s + 3, outline="#d1242f", width=2)
 
     @staticmethod
     def _set_text(t, s):
@@ -192,13 +209,24 @@ class ReviewDialog:
         self.busy = True
         for b in (self.btn_hi, self.btn_box, self.btn_reg):
             b.config(state="disabled")
+        self._drop()
+        self.prog = [k, time.time(), 0.0, "준비하는 중"]
+        self._show_prog()
+        self.prog_frame.pack(fill="x", pady=(10, 0))
+        self.win.config(cursor="watch")
         self.say(f"{self.work.label(k)} 다시 읽는 중…")
+
+        def prog(f, text):
+            self.q.put(("prog", k, (f, text)))
 
         def run():
             try:
                 if self.ready is not None:
+                    if not self.ready.is_set():
+                        prog(0.0, "인식 모델 준비를 기다리는 중")
                     self.ready.wait()
-                paras, fl, pim, regs = W.reread(self.work, k, self.reader, box=box, scale=scale, regions=regions)
+                paras, fl, pim, regs = W.reread(self.work, k, self.reader, box=box, scale=scale, regions=regions,
+                                                progress=prog)
                 if scale != 1:  # 확인 창의 문제 그림·영역은 변환 해상도 기준
                     pim = pim.resize((round(pim.width / scale), round(pim.height / scale)), Image.LANCZOS)
                 # 문제 영역을 새로 잡으면 그림 자리가 바뀌므로 예전 사용자 영역은 버림
@@ -214,7 +242,14 @@ class ReviewDialog:
         try:
             while True:
                 kind, k, val = self.q.get_nowait()
+                if kind == "prog":
+                    if self.prog is not None:
+                        self.prog[2], self.prog[3] = val
+                    continue
                 self.busy = False
+                self.prog = None
+                self.prog_frame.pack_forget()
+                self.win.config(cursor="")
                 for b in (self.btn_hi, self.btn_box, self.btn_reg):
                     b.config(state="normal")
                 if kind == "err":
@@ -228,14 +263,23 @@ class ReviewDialog:
             pass
         except Exception:  # noqa: BLE001
             traceback.print_exc()
+        if self.prog is not None:
+            self._show_prog()
         if self.win.winfo_exists():
             self.win.after(100, self._poll)
+
+    def _show_prog(self):
+        k, t0, f, text = self.prog
+        sec = int(time.time() - t0)
+        other = "" if k == self.k else f" ({self.work.label(k)})"
+        self.prog_label.config(text=f"다시 읽는 중{other}… {text} · {int(f * 100)}% · {sec}초")
+        self.prog_bar["value"] = max(2, int(f * 100))
 
     def _show_cand(self, cand):
         self.cand = cand
         paras, fl, pim, what = cand[:4]
         self.cand_title.config(text=what)
-        self.cand_reason.config(text=("확인할 점: " + ", ".join(fl)) if fl else "의심되는 곳 없음",
+        self.cand_reason.config(text=_reason_text(fl) if fl else "의심되는 곳 없음",
                                 fg="#d1242f" if fl else "#1a7f37")
         self._set_text(self.cand_text, W.preview_text(paras, self.work.probs[self.k].num))
         self.cand_frame.pack(fill="x")
@@ -313,6 +357,15 @@ class ReviewDialog:
             return
         self.say(f"다시 저장했습니다: {out} (문단 {counts.get('paragraphs', 0)}개, 수식 {counts.get('equations', 0)}개)",
                  "#1a7f37")
+
+
+def _reason_text(fl) -> str:
+    if not fl:
+        return ""
+    t = "확인할 점: " + ", ".join(fl)
+    if any(f.startswith("읽지 않은 곳") for f in fl):
+        t += "  (원본 그림의 빨간 상자. [영역 나누기]에서 그 상자를 눌러 종류를 정하면 다시 읽음)"
+    return t
 
 
 class BoxPicker:
@@ -415,6 +468,10 @@ class RegionEditor:
         c.delete("reg")
         for r in self.ai:
             if any(_iou(r["box"], u["box"]) > 0.5 for u in self.user):
+                continue
+            if r["kind"] == "unread":  # 읽지 않은 곳: 빨간 상자 (누르면 고른 종류로 정함)
+                x0, y0, x1, y1 = (v * self.s for v in r["box"])
+                c.create_rectangle(x0 - 3, y0 - 3, x1 + 3, y1 + 3, outline="#d1242f", width=2, tags="reg")
                 continue
             name, col = KIND.get(r["kind"], ("?", "#999"))
             c.create_rectangle(*[v * self.s for v in r["box"]], outline=col, width=1, dash=(4, 3), tags="reg")
